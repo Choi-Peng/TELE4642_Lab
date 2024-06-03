@@ -57,15 +57,19 @@ class Source:
 		return self.packets
 
 class Queue:
-	def __init__(self, log_file, size):
+	def __init__(self, log_file, size = 0):
 		self.size  = size
 		self.queue = []
 		self.dropped_count = 0 
-		self.num_Q = [0 for i in range(12)]
+		self.num_Q = [0] * 12
 		self.log_file = log_file
 
 	def insert(self, packet):
-		if len(self.queue) >= self.size:
+		def ensure_list_size(lst, size):
+			while len(lst) <= size:
+				lst.append(0)
+
+		if self.size != 0 and len(self.queue) >= self.size:
 			self.dropped_count += 1
 		else: 
 			n = len(self.queue)
@@ -75,10 +79,8 @@ class Queue:
 					.format(f"{sys_clk:<12.3f}", f"{packet.index:<6}", f"{packet.size:<6}", n))
 			# print("Time: {} ARRIVAL    Index: {} Packet size:{} Find {} packets in the Queue"\
 			# 	.format(f"{sys_clk:<12.3f}", f"{packet.index:<6}", f"{packet.size:<6}", n))
-			if n < 11:
-				self.num_Q[n] += 1
-			else:
-				self.num_Q[11] += 1
+			ensure_list_size(self.num_Q, n)
+			self.num_Q[n] += 1
 
 	def extract(self):
 		if len(self.queue) != 0:
@@ -189,8 +191,8 @@ class Server:
 		T  = T_total / N_total
 		N  = 0
 		n  = queue.num_Q
-		P  = [0 for i in range(12)]
-		Pn = [0 for i in range(12)]
+		P  = [0 for i in range(len(n))]
+		Pn = [0 for i in range(len(n))]
 		for i in range(len(n)):
 			P[i] = (n[i]/N_total)
 			if P[i] < 10 ** (-5):
@@ -199,7 +201,7 @@ class Server:
 				Pn[i] = f"{P[i]*(10**3):.3f}m" # m%
 			else:
 				Pn[i] = f"{P[i]:.3f}"          #  %
-			N += P[i] * n[i]
+			N += P[i] * i
 
 		with open(sum_file, 'a') as f:
 			f.write(f"Summary:\n")
@@ -208,8 +210,11 @@ class Server:
 			f.write(f"average time spent by a packet in the system T: {T:.3f} us\n")
 			f.write(f"probability P(n) (%) that an arriving packet finds n packets already in the system:\n")
 			f.write(f"{"   n:":<8}{"0":<8}{"1":<8}{"2":<8}{"3":<8}{"4":<8}{"5":<8}{"6":<8}{"7":<8}{"8":<8}{"9":<8}{"10":<8}{">10":<8}Total \n")
-			f.write(f"{" num:":<8}{n[0]:<8}{n[1]:<8}{n[2]:<8}{n[3]:<8}{n[4]:<8}{n[5]:<8}{n[6]:<8}{n[7]:<8}{n[8]:<8}{n[9]:<8}{n[10]:<8}{n[11]:<8}{sum(n)}\n")
-			f.write(f"{"P(n):":<8}{Pn[0]:<8}{Pn[1]:<8}{Pn[2]:<8}{Pn[3]:<8}{Pn[4]:<8}{Pn[5]:<8}{Pn[6]:<8}{Pn[7]:<8}{Pn[8]:<8}{Pn[9]:<8}{Pn[10]:<8}{Pn[11]:<8}{sum(P)}\n")
+			f.write(f"{" num:":<8}{n[0]:<8}{n[1]:<8}{n[2]:<8}{n[3]:<8}{n[4]:<8}{n[5]:<8}{n[6]:<8}{n[7]:<8}{n[8]:<8}{n[9]:<8}{n[10]:<8}{sum(n[11:]):<8}{sum(n)}\n")
+			f.write(f"{"P(n):":<8}{Pn[0]:<8}{Pn[1]:<8}{Pn[2]:<8}{Pn[3]:<8}{Pn[4]:<8}{Pn[5]:<8}{Pn[6]:<8}{Pn[7]:<8}{Pn[8]:<8}{Pn[9]:<8}{Pn[10]:<8}{sum(P[11:]):<8}{sum(P)}\n")
+
+		with open(self.log_file, 'a') as f:
+			f.write(f"\nNumber of packets found in the queue: \n{n}")
 
 		print("\nSummary:")
 		print("-------------------------------------------")
@@ -217,5 +222,5 @@ class Server:
 		print(f"average time spent by a packet in the system T: {T:.3f} us")
 		print(f"probability P(n) (%) that an arriving packet finds n packets already in the system: ")
 		print(f"{"   n:":<8}{"0":<8}{"1":<8}{"2":<8}{"3":<8}{"4":<8}{"5":<8}{"6":<8}{"7":<8}{"8":<8}{"9":<8}{"10":<8}{">10":<8}Total \n")
-		print(f"{" num:":<8}{n[0]:<8}{n[1]:<8}{n[2]:<8}{n[3]:<8}{n[4]:<8}{n[5]:<8}{n[6]:<8}{n[7]:<8}{n[8]:<8}{n[9]:<8}{n[10]:<8}{n[11]:<8}{sum(n)}\n")
-		print(f"{"P(n):":<8}{Pn[0]:<8}{Pn[1]:<8}{Pn[2]:<8}{Pn[3]:<8}{Pn[4]:<8}{Pn[5]:<8}{Pn[6]:<8}{Pn[7]:<8}{Pn[8]:<8}{Pn[9]:<8}{Pn[10]:<8}{Pn[11]:<8}{sum(P)}\n")
+		print(f"{" num:":<8}{n[0]:<8}{n[1]:<8}{n[2]:<8}{n[3]:<8}{n[4]:<8}{n[5]:<8}{n[6]:<8}{n[7]:<8}{n[8]:<8}{n[9]:<8}{n[10]:<8}{sum(n[11:]):<8}{sum(n)}\n")
+		print(f"{"P(n):":<8}{Pn[0]:<8}{Pn[1]:<8}{Pn[2]:<8}{Pn[3]:<8}{Pn[4]:<8}{Pn[5]:<8}{Pn[6]:<8}{Pn[7]:<8}{Pn[8]:<8}{Pn[9]:<8}{Pn[10]:<8}{sum(P[11:]):<8}{sum(P)}\n")
