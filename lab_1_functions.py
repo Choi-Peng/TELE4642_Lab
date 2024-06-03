@@ -23,8 +23,8 @@ class Packet:
 	def __init__(self, packet_index, time_arrivel, packet_size):
 		self.index     = packet_index
 		self.arrival   = time_arrivel
-		self.departure = None
-		self.spent     = None
+		self.departure = 0
+		self.spent     = 0
 		self.size      = packet_size
 
 	def __str__(self):
