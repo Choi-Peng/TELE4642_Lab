@@ -4,15 +4,17 @@ Create Date: 02/06/2024
 Last Edit Date: 03/06/2024
 File Name: lab_1_part_a.py
 Description: Functions of M/M/1 queue modle.
-Dependencies: lab_1_functions, numpy, argparse
+Dependencies: lab_1_functions, numpy, argparse, time
 """
 
 import lab_1_functions as f
 import numpy as np
 import argparse
-
+import time
 
 def main(_lambda, npkts, fifo_len):
+    print("Start Running")
+    start_time = time.time()
 
     # Create log files
     log_file = f'log/sim_lambda_{_lambda}_npkts_{npkts}_Qlen_{fifo_len}.log'
@@ -56,11 +58,16 @@ def main(_lambda, npkts, fifo_len):
             break
 
         clk += 0.001
-    
-    for pkt in range(len(packets)):
-        with open(pkt_file, 'a') as pkts:
-            pkts.write(f"{packets[pkt]}\tArrival Time: {packets[pkt].arrival}  \tDeparture Time: {packets[pkt].departure} \tSpent: {packets[pkt].spent:.3f}\n")
 
+    np.savetxt(pkt_file, packets, fmt='%s', delimiter='\t')
+    
+    # for pkt in range(len(packets)):
+    #     with open(pkt_file, 'a') as pkts:
+    #         pkts.write(f"{packets[pkt]}\tArrival Time: {packets[pkt].arrival}  \tDeparture Time: {packets[pkt].departure} \tSpent: {packets[pkt].spent:.3f}\n")
+
+    end_time = time.time()
+    elapsed_time = end_time - start_time
+    print(f"End Running. Time Usage: {elapsed_time} s")
 
 if __name__ == "__main__":
     # Create the parser
