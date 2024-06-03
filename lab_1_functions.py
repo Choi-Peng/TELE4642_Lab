@@ -29,8 +29,8 @@ class Packet:
 
 	def __str__(self):
 		global sys_clk
-		return "Index: {} \t Packet size: {} \t Arrival time: {} \t Departure time: {} \t Spent {} us"\
-			.format(self.index, self.size, self.arrival, self.departure, self.spent)
+		return "Index: {} Packet size: {} Arrival time: {} Departure time: {} Spent time: {}"\
+			.format(f"{self.index:<6}", f"{self.size:<6}", f"{self.arrival:<12}", f"{self.departure:<12}", f"{self.spent:<12.3f}")
 
 class Source:
 	def __init__(self, _lambda = 1, npkts = 1000000, size = 1250):
