@@ -29,7 +29,8 @@ class Packet:
 
 	def __str__(self):
 		global sys_clk
-		return "Index: {} \t Packet size: {} ".format(self.index, self.size)
+		return "Index: {} \t Packet size: {} \t Arrival time: {} \t Departure time: {} \t Spent {} us"\
+			.format(self.index, self.size, self.arrival, self.departure, self.spent)
 
 class Source:
 	def __init__(self, _lambda = 1, npkts = 1000000, size = 1250):
@@ -45,9 +46,9 @@ class Source:
 			""" Packet sizes are exponentially distributed with a mean size of 1250 Bytes. """
 			packet_size = round(np.random.exponential(self.size))
 			""" The source generates packets as a Poisson process at a specified rate lambda. """
-			inter_arrival_time = np.random.poisson(1 / self._lambda)
-			# inter_arrival_time = np.random.exponential(1 / self._lambda)
-			arrival_time = round(self.current_time + inter_arrival_time, 3)
+			# inter_arrival_time = np.random.poisson(1 / self._lambda)
+			inter_arrival_time = np.random.exponential(1 / self._lambda)
+			arrival_time = round(self.current_time + inter_arrival_time, 2)
 			packet = Packet(self.generated_packets, arrival_time, packet_size)
 			self.generated_packets += 1
 			self.current_time = arrival_time
@@ -60,22 +61,24 @@ class Queue:
 		self.size  = size
 		self.queue = []
 		self.dropped_count = 0 
-		self.num_Q = [0 for i in range(11)]
+		self.num_Q = [0 for i in range(12)]
 		self.log_file = log_file
 
-	def insert(self, item):
+	def insert(self, packet):
 		if len(self.queue) >= self.size:
 			self.dropped_count += 1
 		else: 
 			n = len(self.queue)
-			self.queue.append(item)
+			self.queue.append(packet)
 			with open(self.log_file, 'a') as f:
-				f.write(f"Time: {sys_clk:.3f} \tARRIVAL\t\t{item}\t{n} packets in the Queue\n")
-			print(f"Time: {sys_clk:.3f} \tARRIVAL\t\t{item}\t{n} packets in the Queue")
-			if n < 10:
+				f.write("Time: {} ARRIVAL    Index: {} Packet size:{} Find {} packets in the Queue\n"\
+					.format(f"{sys_clk:<12.3f}", f"{packet.index:<6}", f"{packet.size:<6}", n))
+			# print("Time: {} ARRIVAL    Index: {} Packet size:{} Find {} packets in the Queue"\
+			# 	.format(f"{sys_clk:<12.3f}", f"{packet.index:<6}", f"{packet.size:<6}", n))
+			if n < 11:
 				self.num_Q[n] += 1
 			else:
-				self.num_Q[10] += 1
+				self.num_Q[11] += 1
 
 	def extract(self):
 		if len(self.queue) != 0:
@@ -122,7 +125,7 @@ class Server:
 						self.state_next = "GET_PACKET"
 				case "SERVE":
 					if self.state_falg == "packet_served":
-						self.state_next = "INITIAL"
+						self.state_next = "GET_PACKET"
 						if service_flag == "END":
 							self.service_end = 1
 					else:
@@ -139,6 +142,7 @@ class Server:
 		def state_get_packet(self, queue):
 			packet_temp = queue.extract()
 			if packet_temp != None:
+				# print(packet_temp)
 				self.packet = packet_temp
 				self.state_falg = "packet_getted"
 
@@ -153,12 +157,17 @@ class Server:
 			if  time_delta >= self.service_time:
 				self.packet.departure = f"{self.current_time:.3f}"
 				self.packet.spent = self.current_time - self.packet.arrival
-				self.state_falg = "packet_served"
+				# self.state_falg = "packet_served"
 				self.packet_served += 1
 				with open(self.log_file, 'a') as f:
-					f.write(f"Time: {sys_clk:.3f} \tDEPARTURE\t{self.packet}\tspent {self.service_time:.3f} us in the system\n")
-				print(f"Time: {sys_clk:.3f} \tDEPARTURE\t{self.packet}\tspent {self.packet.spent:.3f} us in the system")
-		
+					f.write("Time: {} DEPARTURE  Index: {} Packet size:{} Spent {} us in the system\n"\
+						.format(f"{sys_clk:<12.3f}", f"{self.packet.index:<6}", f"{self.packet.size:<6}", f"{self.service_time:.3f}"))
+				# print("Time: {} DEPARTURE  Index: {} Packet size:{} Spent {} us in the system"\
+				# 	.format(f"{sys_clk:<12.3f}", f"{self.packet.index:<6}", f"{self.packet.size:<6}", f"{self.packet.spent:.3f}"))
+				state_initial(self)
+				self.state_falg = "packet_served"
+
+		# print(f"Current State: {self.state_current}")
 		match self.state_current:
 			case "INITIAL":
 				state_initial(self)
@@ -172,40 +181,41 @@ class Server:
 		state_update(self)
 
 	def summary(self, sum_file, queue, packets):
-		N = self.packet_served
+		N_total = self.packet_served
 		T_total = 0
 		for i in range(len(packets)):
 			if packets[i].spent != None:
 				T_total += packets[i].spent
-		T = T_total / N
-		n = queue.num_Q
-		P = [0 for i in range(11)]
-		Pn = [0 for i in range(11)]
+		T  = T_total / N_total
+		N  = 0
+		n  = queue.num_Q
+		P  = [0 for i in range(12)]
+		Pn = [0 for i in range(12)]
 		for i in range(len(n)):
-			P[i] = (n[i]/N) * 100  
-			if P[i] < 10 ** (-3): 
+			P[i] = (n[i]/N_total)
+			if P[i] < 10 ** (-5):
+				Pn[i] = f"{P[i]*(10**6):.3f}u" # u%
+			elif P[i] < 10 ** (-2): 
 				Pn[i] = f"{P[i]*(10**3):.3f}m" # m%
 			else:
-				Pn[i] = f"{P[i]:.3f}"          # %
+				Pn[i] = f"{P[i]:.3f}"          #  %
+			N += P[i] * n[i]
 
 		with open(sum_file, 'a') as f:
 			f.write(f"Summary:\n")
 			f.write(f"-------------------------------------------\n")
-			f.write(f"average number of packets in the system N: {N}\n")
-			f.write(f"average time spent by a packet in the system T: {T:.3f}\n")
+			f.write(f"average number of packets in the system N: {N:.2f}\n")
+			f.write(f"average time spent by a packet in the system T: {T:.3f} us\n")
 			f.write(f"probability P(n) (%) that an arriving packet finds n packets already in the system:\n")
-			f.write(f"n:\t\t0\t\t1\t\t2\t\t3\t\t4\t\t5\t\t6\t\t7\t\t8\t\t9\t\t>= 10\tTotal \n")
-			f.write(f"num:\t{n[0]}\t\t{n[1]}\t\t{n[2]}\t\t{n[3]}\t\t{n[4]}\t\t{n[5]}\t\t{n[6]}\t\t{n[7]}\t\t{n[8]}\t\t{n[9]}\t\t{n[10]}\t\t{sum(n)}\n")
-			f.write(f"P(n):\t{Pn[0]}\t{Pn[1]}\t{Pn[2]}\t{Pn[3]}\t{Pn[4]}\t{Pn[5]}\t{Pn[6]}\t{Pn[7]}\t{Pn[8]}\t{Pn[9]}\t{Pn[10]}\t{sum(P)}\n")
+			f.write(f"{"   n:":<8}{"0":<8}{"1":<8}{"2":<8}{"3":<8}{"4":<8}{"5":<8}{"6":<8}{"7":<8}{"8":<8}{"9":<8}{"10":<8}{">10":<8}Total \n")
+			f.write(f"{" num:":<8}{n[0]:<8}{n[1]:<8}{n[2]:<8}{n[3]:<8}{n[4]:<8}{n[5]:<8}{n[6]:<8}{n[7]:<8}{n[8]:<8}{n[9]:<8}{n[10]:<8}{n[11]:<8}{sum(n)}\n")
+			f.write(f"{"P(n):":<8}{Pn[0]:<8}{Pn[1]:<8}{Pn[2]:<8}{Pn[3]:<8}{Pn[4]:<8}{Pn[5]:<8}{Pn[6]:<8}{Pn[7]:<8}{Pn[8]:<8}{Pn[9]:<8}{Pn[10]:<8}{Pn[11]:<8}{sum(P)}\n")
 
 		print("\nSummary:")
 		print("-------------------------------------------")
-		print(f"average number of packets in the system N: {N}")
-		print(f"average time spent by a packet in the system T: {T:.3f}")
+		print(f"average number of packets in the system N: {N:.2f}")
+		print(f"average time spent by a packet in the system T: {T:.3f} us")
 		print(f"probability P(n) (%) that an arriving packet finds n packets already in the system: ")
-		print(f"   n:\t0\t1\t2\t3\t4\t5\t6\t7\t8\t9\t>= 10\tTotal")
-		print(f" num:\t{n[0]}\t{n[1]}\t{n[2]}\t{n[3]}\t{n[4]}\t{n[5]}\t{n[6]}\t{n[7]}\t{n[8]}\t{n[9]}\t{n[10]}\t{sum(n)}")
-		print(f"P(n):\t{Pn[0]}\t{Pn[1]}\t{Pn[2]}\t{Pn[3]}\t{Pn[4]}\t{Pn[5]}\t{Pn[6]}\t{Pn[7]}\t{Pn[8]}\t{Pn[9]}\t{Pn[10]}\t{sum(P)}")
-		#Here you need to plot P(n) for n from 0 to 10
-		#X axis would be 0 to 10
-		#Y axis would be P(n)
+		print(f"{"   n:":<8}{"0":<8}{"1":<8}{"2":<8}{"3":<8}{"4":<8}{"5":<8}{"6":<8}{"7":<8}{"8":<8}{"9":<8}{"10":<8}{">10":<8}Total \n")
+		print(f"{" num:":<8}{n[0]:<8}{n[1]:<8}{n[2]:<8}{n[3]:<8}{n[4]:<8}{n[5]:<8}{n[6]:<8}{n[7]:<8}{n[8]:<8}{n[9]:<8}{n[10]:<8}{n[11]:<8}{sum(n)}\n")
+		print(f"{"P(n):":<8}{Pn[0]:<8}{Pn[1]:<8}{Pn[2]:<8}{Pn[3]:<8}{Pn[4]:<8}{Pn[5]:<8}{Pn[6]:<8}{Pn[7]:<8}{Pn[8]:<8}{Pn[9]:<8}{Pn[10]:<8}{Pn[11]:<8}{sum(P)}\n")
