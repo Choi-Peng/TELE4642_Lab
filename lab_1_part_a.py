@@ -17,9 +17,14 @@ def main(_lambda, npkts, fifo_len):
     start_time = time.time()
 
     # Create log files
-    log_file = f'log/sim_lambda_{_lambda}_npkts_{npkts}_Qlen_{fifo_len}.log'
-    pkt_file = f'log/pkt_lambda_{_lambda}_npkts_{npkts}.log'
-    sum_file = f'log/sum_lambda_{_lambda}_npkts_{npkts}_Qlen_{fifo_len}.log'
+    if fifo_len == 0:
+        log_file = f'E:/UNSW/24_T2/TELE4642/Lab/Lab_1/log/sim_lambda_{_lambda}_npkts_{npkts}.log'
+        pkt_file = f'E:/UNSW/24_T2/TELE4642/Lab/Lab_1/log/pkt_lambda_{_lambda}_npkts_{npkts}.log'
+        sum_file = f'E:/UNSW/24_T2/TELE4642/Lab/Lab_1/log/sum_lambda_{_lambda}_npkts_{npkts}.log'
+    else:
+        log_file = f'E:/UNSW/24_T2/TELE4642/Lab/Lab_1/log/sim_lambda_{_lambda}_npkts_{npkts}_Qlen_{fifo_len}.log'
+        pkt_file = f'E:/UNSW/24_T2/TELE4642/Lab/Lab_1/log/pkt_lambda_{_lambda}_npkts_{npkts}.log'
+        sum_file = f'E:/UNSW/24_T2/TELE4642/Lab/Lab_1/log/sum_lambda_{_lambda}_npkts_{npkts}_Qlen_{fifo_len}.log'
     open(log_file, 'w').close()
     open(pkt_file, 'w').close()
     open(sum_file, 'w').close()
@@ -74,9 +79,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     
     # Add arguments
-    parser.add_argument("--_lambda",type=float, default=1,       help="lambda")
-    parser.add_argument("--npkts",  type=int,   default=1000000, help="npkts")
-    parser.add_argument("--queue",  type=int,   default=1000000, help="Queue length")
+    parser.add_argument("--_lambda", type=float, default=1      , help="lambda"      )
+    parser.add_argument("--npkts"  , type=int  , default=1000000, help="npkts"       )
+    parser.add_argument("--queue"  , type=int  , default=0      , help="Queue length")
 
     # Parse the arguments
     args = parser.parse_args()
