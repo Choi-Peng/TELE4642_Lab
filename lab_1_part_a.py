@@ -3,7 +3,7 @@ Code Author: Peng, Caikun
 Create Date: 02/06/2024 
 Last Edit Date: 03/06/2024
 File Name: lab_1_part_a.py
-Description: Functions of M/M/1 queue modle.
+Description: Main program of lab 1 - part a
 Dependencies: lab_1_functions, numpy, argparse, time
 """
 
