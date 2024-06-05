@@ -1,17 +1,32 @@
 """
 Code Author: Peng, Caikun
 Create Date: 01/06/2024 
-Last Edit Date: 03/06/2024
+Last Edit Date: 05/06/2024
 File Name: lab_1_functions.py
-Description: Functions of M/M/1 queue modle.
-Dependencies: numpy
+Description: Functions of M/M/1 queue modle for lab 1.
+Dependencies: numpy, logging
 """
 
 import numpy as np
+import logging
+from logging.handlers import RotatingFileHandler
 
 sys_clk = 0 
 
-class system_clk:
+class log_init:
+	def __init__(self, file_addr):
+		self.log_file = f"{file_addr}/sim.log"
+		formatter = logging.Formatter('%(message)s')
+		handler = RotatingFileHandler(self.log_file, 
+									  mode='w', 
+									  maxBytes=100 * 1024 * 1024, # 100MB 
+									  backupCount=100)			  # 10000MB in total
+		handler.setFormatter(formatter)
+		logger = logging.getLogger("sim_log")
+		logger.setLevel(logging.INFO)
+		logger.addHandler(handler)
+
+class System_clk:
 	def __init__(self, clk=0):
 		global sys_clk 
 		sys_clk = clk
@@ -32,7 +47,7 @@ class Packet:
 		return "Index: {} Packet size: {} Arrival time: {} Departure time: {} Spent time: {}"\
 			.format(f"{self.index:<6}", f"{self.size:<6}", f"{self.arrival:<12}", f"{self.departure:<12}", f"{self.spent:<12.3f}")
 
-class Source:
+class Source_part_a:
 	def __init__(self, _lambda = 1, npkts = 1000000, size = 1250):
 		self._lambda = _lambda
 		self.packet_count = npkts
@@ -56,15 +71,41 @@ class Source:
 		
 		return self.packets
 
+class Source_part_b:
+	def __init__(self, file_name):
+		self.trace_temp = []
+		self.packets = []
+		self.size = 0
+		self.generated_packets = 0
+		self.current_time = 0
+		self.file_name = f"lab_1_part_b_{file_name}.txt"
+
+	def generate(self, packet_len = None):
+		with open(self.file_name, 'r') as file:
+			for line in file:
+				self.trace_temp = line.strip().split()        
+				inter_arrival_time = float(self.trace_temp[0])
+				packet_size = int(self.trace_temp[1])
+				arrival_time = round(self.current_time + inter_arrival_time, 2)
+				packet = Packet(self.generated_packets, arrival_time, packet_size)
+				self.generated_packets += 1
+				self.current_time = arrival_time
+				self.packets.append(packet)
+				if packet_len:
+					if self.generated_packets >= packet_len:
+						break
+		
+		return self.packets
+
 class Queue:
-	def __init__(self, log_file, size = 0):
+	def __init__(self, size = 0):
 		self.size  = size
 		self.queue = []
 		self.dropped_count = 0 
-		self.num_Q = [0] * 12
-		self.log_file = log_file
+		self.num_sys = [0] * 12
+		self.logger = logging.getLogger("sim_log")
 
-	def insert(self, packet):
+	def insert(self, packet, service_flag):
 		def ensure_list_size(lst, size):
 			while len(lst) <= size:
 				lst.append(0)
@@ -72,15 +113,19 @@ class Queue:
 		if self.size != 0 and len(self.queue) >= self.size:
 			self.dropped_count += 1
 		else: 
-			n = len(self.queue)
+			num_in_Q = len(self.queue)
 			self.queue.append(packet)
-			with open(self.log_file, 'a') as f:
-				f.write("Time: {} ARRIVAL    Index: {} Packet size:{} Find {} packets in the Queue\n"\
-					.format(f"{sys_clk:<12.3f}", f"{packet.index:<6}", f"{packet.size:<6}", n))
-			# print("Time: {} ARRIVAL    Index: {} Packet size:{} Find {} packets in the Queue"\
-			# 	.format(f"{sys_clk:<12.3f}", f"{packet.index:<6}", f"{packet.size:<6}", n))
-			ensure_list_size(self.num_Q, n)
-			self.num_Q[n] += 1
+			if service_flag == "SERVING":
+				num_in_sys = num_in_Q + 1
+			else: 
+				num_in_sys = num_in_Q
+			ensure_list_size(self.num_sys, num_in_sys)
+			self.num_sys[num_in_sys] += 1
+			# print("Time: {} ARRIVAL    Index: {} Packet size:{} Find {} packets in the Queue and {} in the system"\
+			# 	.format(f"{sys_clk:<12.3f}", f"{packet.index:<6}", f"{packet.size:<6}", num_in_Q, num_in_sys))
+
+			self.logger.info("Time: {} ARRIVAL    Index: {} Packet size:{} Find {} packets in the Queue and {} in the system"\
+				.format(f"{sys_clk:<12.3f}", f"{packet.index:<6}", f"{packet.size:<6}", num_in_Q, num_in_sys))
 
 	def extract(self):
 		if len(self.queue) != 0:
@@ -93,21 +138,22 @@ class Queue:
 		return self.queue[0]
 
 class Server:
-	def __init__(self, log_file, service_rate = 1250):
+	def __init__(self, packet_len, service_rate = 1250):
 		# The server can process 10Gbps -> 10*10^9 bps -> 10*10^3 bits per us -> 1250 Bytes per us
-		self.service_rate = service_rate
-		self.current_time = 0
-		self.packet = None
+		self.service_rate  = service_rate
+		self.current_time  = 0
+		self.packet        = None
 		self.packet_served = 0
 		self.state_current = "INITIAL"
-		self.state_next = "INITIAL"
-		self.state_falg = None
-		self.time_flag = 1
-		self.time_temp = 0
-		self.service_end = 0
-		self.log_file = log_file
+		self.state_next    = "INITIAL"
+		self.state_flag    = None
+		self.time_flag     = 1
+		self.time_temp     = 0
+		self.service_flag = "IDLE"
+		self.service_end   = 0
+		self.logger = logging.getLogger("sim_log")
 
-	def service(self, queue, service_flag):
+	def service(self, queue, service_flag, packet_flag):
 		"""
 		State Transfer
 		# INITIAL -> GET_PACKET -> SERVE -> GET_PACKET
@@ -121,14 +167,16 @@ class Server:
 				case "INITIAL":
 					self.state_next = "GET_PACKET"
 				case "GET_PACKET":
-					if self.state_falg == "packet_getted":
+					if self.state_flag == "packet_getted":
+						self.service_flag = "SERVING"
 						self.state_next = "SERVE"
 					else: 
 						self.state_next = "GET_PACKET"
 				case "SERVE":
-					if self.state_falg == "packet_served":
+					if self.state_flag == "packet_served":
+						self.service_flag = "IDLE"
 						self.state_next = "GET_PACKET"
-						if service_flag == "END":
+						if packet_flag == "to_END":
 							self.service_end = 1
 					else:
 						self.state_next = "SERVE"
@@ -137,7 +185,7 @@ class Server:
 
 		def state_initial(self):
 			self.packet = None
-			self.state_falg = None
+			self.state_flag = None
 			self.time_flag = 1
 			self.time_temp = 0
 
@@ -146,7 +194,7 @@ class Server:
 			if packet_temp != None:
 				# print(packet_temp)
 				self.packet = packet_temp
-				self.state_falg = "packet_getted"
+				self.state_flag = "packet_getted"
 
 		def state_serve(self):
 			self.current_time = sys_clk
@@ -154,20 +202,20 @@ class Server:
 				self.time_temp = self.current_time
 				self.service_time = round(self.packet.size / self.service_rate, 3)
 				self.time_flag = 0
-		
+			# self.logger.info(f"{service_flag} packet {self.packet.index}")
 			time_delta = self.current_time - self.time_temp
 			if  time_delta >= self.service_time:
 				self.packet.departure = f"{self.current_time:.3f}"
 				self.packet.spent = self.current_time - self.packet.arrival
-				# self.state_falg = "packet_served"
+				# self.state_flag = "packet_served"
 				self.packet_served += 1
-				with open(self.log_file, 'a') as f:
-					f.write("Time: {} DEPARTURE  Index: {} Packet size:{} Spent {} us in the system\n"\
-						.format(f"{sys_clk:<12.3f}", f"{self.packet.index:<6}", f"{self.packet.size:<6}", f"{self.service_time:.3f}"))
 				# print("Time: {} DEPARTURE  Index: {} Packet size:{} Spent {} us in the system"\
 				# 	.format(f"{sys_clk:<12.3f}", f"{self.packet.index:<6}", f"{self.packet.size:<6}", f"{self.packet.spent:.3f}"))
+
+				self.logger.info("Time: {} DEPARTURE  Index: {} Packet size:{} Spent {} us in the system"\
+					.format(f"{sys_clk:<12.3f}", f"{self.packet.index:<6}", f"{self.packet.size:<6}", f"{self.packet.spent:.3f}"))
 				state_initial(self)
-				self.state_falg = "packet_served"
+				self.state_flag = "packet_served"
 
 		# print(f"Current State: {self.state_current}")
 		match self.state_current:
@@ -181,8 +229,10 @@ class Server:
 				state_initial(self)
 		state_transfer(self)
 		state_update(self)
+		return self.service_flag
 
-	def summary(self, sum_file, queue, packets):
+	def summary(self, file_addr, file_ind, queue, packets):
+		sum_file = f"{file_addr}/sum.log"
 		N_total = self.packet_served
 		T_total = 0
 		for i in range(len(packets)):
@@ -190,7 +240,7 @@ class Server:
 				T_total += packets[i].spent
 		T  = T_total / N_total
 		N  = 0
-		n  = queue.num_Q
+		n  = queue.num_sys
 		P  = [0 for i in range(len(n))]
 		Pn = [0 for i in range(len(n))]
 		for i in range(len(n)):
@@ -204,7 +254,7 @@ class Server:
 			N += P[i] * i
 
 		with open(sum_file, 'a') as f:
-			f.write(f"Summary:\n")
+			f.write(f"Summary for {file_ind}:\n")
 			f.write(f"-------------------------------------------\n")
 			f.write(f"average number of packets in the system N: {N:.2f}\n")
 			f.write(f"average time spent by a packet in the system T: {T:.3f} us\n")
@@ -213,10 +263,7 @@ class Server:
 			f.write(f"{" num:":<8}{n[0]:<8}{n[1]:<8}{n[2]:<8}{n[3]:<8}{n[4]:<8}{n[5]:<8}{n[6]:<8}{n[7]:<8}{n[8]:<8}{n[9]:<8}{n[10]:<8}{sum(n[11:]):<8}{sum(n)}\n")
 			f.write(f"{"P(n):":<8}{Pn[0]:<8}{Pn[1]:<8}{Pn[2]:<8}{Pn[3]:<8}{Pn[4]:<8}{Pn[5]:<8}{Pn[6]:<8}{Pn[7]:<8}{Pn[8]:<8}{Pn[9]:<8}{Pn[10]:<8}{sum(P[11:]):<8}{sum(P)}\n")
 
-		with open(self.log_file, 'a') as f:
-			f.write(f"\nNumber of packets found in the queue: \n{n}")
-
-		print("\nSummary:")
+		print(f"\n\n\nSummary for {file_ind}:")
 		print("-------------------------------------------")
 		print(f"average number of packets in the system N: {N:.2f}")
 		print(f"average time spent by a packet in the system T: {T:.3f} us")
