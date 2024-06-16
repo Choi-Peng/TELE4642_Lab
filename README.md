@@ -1,13 +1,11 @@
-For TELE 4642: Network Performance: Lab 1
+# TELE 4642 Network Performance Labs
 
-# lab_1_functions.py
+## Lab 1: M/M/1 Queue
 
-Defined all the functions need to be used for this lab, including Packet, Source (for part a and part b) , Queue, Server and other useful functions.
+- Part a: Poisson Process Source Model
+- Part b: Long Range Dependence (LRD) Source Model
 
-# lab_1_part_a.py
+## Lab 2: Fat-Tree Topology
 
-The main program of part a.  
-
-# lab_1_part_b.py  
-
-The main program of part b.
+- Part a: Fat-Tree Topology Generation
+- Part b: Fat-Tree Routing Protocol
