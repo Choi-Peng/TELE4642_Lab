@@ -4,7 +4,7 @@ File Name: fat_tree.py
 Create Date: 16/06/2024 
 Last Edit Date: 17/06/2024
 Description: Generate fat-tree topo with parameter k
-Dependencies: argparse, mininet
+Dependencies: argparse, mininet, json
 '''
 
 import argparse
@@ -13,6 +13,7 @@ from mininet.node import Controller, OVSSwitch, RemoteController
 from mininet.cli import CLI
 from mininet.link import TCLink
 from mininet.log import setLogLevel, info
+import json
 
 def main(k):
     net = Mininet(controller = RemoteController,
@@ -26,6 +27,9 @@ def main(k):
 
     switches_aggr = []
     hosts         = []
+    routing_table = {}
+    priority_down = 100
+    priority_up   = 10
 
     # create edge switches, arrg switches, hosts and links 
     for pod in range(k):
@@ -41,6 +45,10 @@ def main(k):
             switch_edge = net.addSwitch(switch_name, 
                                         dpid = switch_dpid)
             pod_switches_edge.append(switch_edge)
+            routing_table[switch_name] = { # initial routing table
+                "routes": [], 
+                "suffix_routes": []
+            }
             # create host
             for host_id in range (k // 2):
                 host_name = f'h{pod}{switch_id}{host_id}'
@@ -48,6 +56,23 @@ def main(k):
                 host      = net.addHost(host_name, ip = host_ip)
                 # create links between edge switch and host
                 net.addLink(host, switch_edge)
+                # add ronte rules for edge switches
+                route = {
+                    "prefix"     : host_ip,
+                    "prefix_len" : 32,
+                    "priority"   : priority_down,
+                    "output"     : host_id + 1
+                }
+                suffix_route = {
+                    "suffix"     : f'0.0.0.{host_id+2}',
+                    "prefix_len" : 32, 
+                    "priority"   : priority_up, 
+                    "output"     : host_id + 1 + (k // 2)
+                }
+                routing_table[switch_name]["routes"].append(route)
+                routing_table[switch_name]["suffix_routes"].append(suffix_route)
+
+            
         # create aggr switches with links
         for i in range(k//2): 
             # create aggr switch
@@ -61,18 +86,54 @@ def main(k):
             # create links between aggr switch and edge switch
             for switch_edge in pod_switches_edge:
                 net.addLink(switch_aggr, switch_edge)
+            # add ronte rules for aggr switches
+            routing_table[switch_name] = { # initial routing table
+                "routes": [], 
+                "suffix_routes": []
+            }
+            for host_id in range (k // 2):
+                route = {
+                    "suffix"     : f'10.0.{host_id}.0',
+                    "prefix_len" : 24,
+                    "priority"   : priority_down,
+                    "output"     : host_id + 1
+                }
+                suffix_route = {
+                    "suffix"     : f'0.0.{host_id}.0',
+                    "prefix_len" : 24, 
+                    "priority"   : priority_up, 
+                    "output"     : host_id + 1 + (k // 2)
+                }
+                routing_table[switch_name]["routes"].append(route)
+                routing_table[switch_name]["suffix_routes"].append(suffix_route)
         switches_aggr.append(pod_switches_aggr)
 
     # create core switches and links
     # create core switches
     for j in range(k//2):
         for i in range(k//2):
+            switch_id   = (j*(k//2))+i
             switch_dpid = f'0000000000{k}{j}{i}'
-            switch_name = f'crSw{(j*(k//2))+i}'
+            switch_name = f'crSw{switch_id}'
             switch_core = net.addSwitch(switch_name, 
                                         dpid = switch_dpid)
             for num  in range(k):
                 net.addLink(switches_aggr[num][j], switch_core) 
+            # add ronte rules for core switches
+            routing_table[switch_name] = { # initial routing table
+                "routes": []
+            }
+            for pod in range(k):
+                route = {
+                    "suffix"     : f'10.{pod}.0.0',
+                    "prefix_len" : 16,
+                    "priority"   : priority_down,
+                    "output"     : pod + 1
+                }
+                routing_table[switch_name]["routes"].append(route)
+
+    with open('routing_table.json', 'w') as f:
+        json.dump(routing_table, f, indent=4)
 
     net.build()
     net.start()
