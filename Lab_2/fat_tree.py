@@ -76,10 +76,39 @@ def main(k):
 
     net.build()
     net.start()
+
+    configure_switches(net, k)
+
     CLI(net)
     net.stop()
 
+def configure_switches(net, k):
+    print('*** Configuring switches')
+    num_switches = len(net.switches)
+    
+    # edge and aggr switches
+    for j in range(k):
+        for i in range(k // 2):
+            index =  (j * k) + i
+            switch = net.switches[index]
+            switch_name = switch.name
+            print(f'*** Configuring {switch_name}')
+            set_br = f'ovs-vsctl set bridge {switch_name} datapath_type=netdev'
+            switch.cmd(set_br)
+        for i in range(k // 2):
+            index =  (j * k) + (k // 2) + i
+            switch = net.switches[index]
+            switch_name = switch.name
+            print(f'*** Configuring {switch_name}')
+            set_br = f'ovs-vsctl set bridge {switch_name} datapath_type=netdev'
+            switch.cmd(set_br)
 
+    # core switches
+    for switch in net.switches[k ** 2 : ]:
+        switch_name = switch.name
+        print(f'*** Configuring {switch_name}')
+        set_br = f'ovs-vsctl set bridge {switch_name} datapath_type=netdev'
+        switch.cmd(set_br)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
