@@ -23,6 +23,12 @@ def load_routing_table():
         route = json.loads(file_content)
         return route
 
+def load_ip_mac_table():
+    with open('ip_mac_table.json', 'r') as file:
+        file_content = file.read()
+        ip_mac_table = json.loads(file_content)
+        return ip_mac_table
+
 class MultiSwitch13(app_manager.RyuApp):
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
 
@@ -31,6 +37,7 @@ class MultiSwitch13(app_manager.RyuApp):
         # initialize mac address table.
         self.mac_to_port   = {}
         self.routing_table = {}
+        self.ip_mac_table  = {}
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
@@ -38,7 +45,7 @@ class MultiSwitch13(app_manager.RyuApp):
         if not self.routing_table:
             self.logger.info('Loading routing table...')
             self.routing_table = load_routing_table()
-            self.logger.info(self.routing_table)
+            # self.logger.info(self.routing_table)
 
         datapath = ev.msg.datapath
         ofproto  = datapath.ofproto
@@ -101,6 +108,11 @@ class MultiSwitch13(app_manager.RyuApp):
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def _packet_in_handler(self, ev):
+        if not self.ip_mac_table:
+            self.logger.info('Loading IP-MAC table...')
+            self.ip_mac_table = load_ip_mac_table()
+            # self.logger.info(self.ip_mac_table)
+
         msg = ev.msg
         datapath = msg.datapath
         ofproto = datapath.ofproto
