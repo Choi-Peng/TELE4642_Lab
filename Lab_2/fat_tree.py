@@ -24,7 +24,6 @@ def main(k):
                                       ip = '127.0.0.1', 
                                     port = 6653)
 
-
     switches_aggr = []
     hosts         = []
     routing_table = {}
@@ -60,16 +59,16 @@ def main(k):
                 net.addLink(host, switch_edge)
                 # add ronte rules for edge switches
                 route = {
-                    "prefix"     : host_ip,
-                    "mask"       : 0xffffffff,
-                    "priority"   : priority_down,
-                    "output"     : host_id + 1
+                    "prefix"   : host_ip,
+                    "mask"     : 0xffffffff,
+                    "priority" : priority_down,
+                    "output"   : host_id + 1
                 }
                 suffix_route = {
-                    "suffix"     : f'0.0.0.{host_id+2}',
-                    "mask"       : 0x000000ff, 
-                    "priority"   : priority_up, 
-                    "output"     : host_id + 1 + (k // 2)
+                    "suffix"   : f'0.0.0.{host_id+2}',
+                    "mask"     : 0x000000ff, 
+                    "priority" : priority_up, 
+                    "output"   : host_id + 1 + (k // 2)
                 }
                 routing_table[switch_dpid]["routes"].append(route)
                 routing_table[switch_dpid]["suffix_routes"].append(suffix_route)
@@ -96,16 +95,16 @@ def main(k):
             }
             for host_id in range (k // 2):
                 route = {
-                    "prefix"     : f'10.0.{host_id}.0',
-                    "mask"       : 0xffffff00,
-                    "priority"   : priority_down,
-                    "output"     : host_id + 1
+                    "prefix"   : f'10.0.{host_id}.0',
+                    "mask"     : 0xffffff00,
+                    "priority" : priority_down,
+                    "output"   : host_id + 1
                 }
                 suffix_route = {
-                    "suffix"     : f'0.0.{host_id}.0',
-                    "mask"       : 0x0000ff00, 
-                    "priority"   : priority_up, 
-                    "output"     : host_id + 1 + (k // 2)
+                    "suffix"   : f'0.0.{host_id}.0',
+                    "mask"     : 0x0000ff00, 
+                    "priority" : priority_up, 
+                    "output"   : host_id + 1 + (k // 2)
                 }
                 routing_table[switch_dpid]["routes"].append(route)
                 routing_table[switch_dpid]["suffix_routes"].append(suffix_route)
@@ -129,10 +128,10 @@ def main(k):
             }
             for pod in range(k):
                 route = {
-                    "prefix"     : f'10.{pod}.0.0',
-                    "mask"       : 0xffff0000,
-                    "priority"   : priority_down,
-                    "output"     : pod + 1
+                    "prefix"   : f'10.{pod}.0.0',
+                    "mask"     : 0xffff0000,
+                    "priority" : priority_down,
+                    "output"   : pod + 1
                 }
                 routing_table[switch_dpid]["routes"].append(route)
 
@@ -140,6 +139,17 @@ def main(k):
         json.dump(routing_table, f, indent=4)
 
     net.build()
+
+    ip_mac_table = {}
+    for host in net.hosts:
+        ip_mac_table[host.name] = {
+            "IP"  : host.IP(),
+            "MAC" : host.MAC()
+        }
+    
+    with open('ip_mac_table.json', 'w') as f:
+        json.dump(ip_mac_table, f,indent=4)
+
     net.start()
 
     configure_switches(net, k)
