@@ -142,10 +142,7 @@ def main(k):
 
     ip_mac_table = {}
     for host in net.hosts:
-        ip_mac_table[host.name] = {
-            "IP"  : host.IP(),
-            "MAC" : host.MAC()
-        }
+        ip_mac_table[host.IP()] = host.MAC()
     
     with open('ip_mac_table.json', 'w') as f:
         json.dump(ip_mac_table, f,indent=4)
