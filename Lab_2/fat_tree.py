@@ -168,6 +168,7 @@ def main(k, ryu):
         net = Mininet(topo = topo,
                       link = TCLink,
                       controller = RemoteController,
+                      autoSetMacs = True, 
                       switch = OVSSwitch)
     else:
         net = Mininet(topo = topo, 
@@ -180,8 +181,6 @@ def main(k, ryu):
                                       ip = '127.0.0.1', 
                                     port = 6633,
                                protocols = "OpenFlow13")
-
-    # net.build()
 
     ip_mac_table = {}
     for host in net.hosts:
