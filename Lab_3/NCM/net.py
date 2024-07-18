@@ -15,6 +15,13 @@ from mininet.link import TCLink
 from mininet.log import setLogLevel, info
 import math
 
+class IPv6DisabledSwitch(OVSSwitch):
+    def start(self, controllers):
+        super(IPv6DisabledSwitch, self).start(controllers)
+        # close IPv6
+        self.cmd('sysctl -w net.ipv6.conf.all.disable_ipv6=1')
+        self.cmd('sysctl -w net.ipv6.conf.default.disable_ipv6=1')
+
 class ncmTopo(Topo):
     def build(self):
         # Number of devices
@@ -25,14 +32,23 @@ class ncmTopo(Topo):
         
         # create monitor and links
         for monitorId in range(numMonitor): # create monitor(s)
-            monitorDpid = f'{monitorId:x}'
+            monitorDpid = f'{monitorId+1:016x}'
             monitorName = f'm{monitorId}'
             monitor = self.addSwitch(monitorName, dpid = monitorDpid)
-            
+            info(f"Created monitor {monitorName} with DPID {monitorDpid}\n")
+
+            # create two hosts as servers
+            internet = self.addHost('internet', ip = '8.8.8.8')
+            localSever = self.addHost('server', ip = '10.0.0.1')
+            linkMonitorToInternet = self.addLink(internet, monitor)
+            linkMonitorToServer = self.addLink(localSever, monitor)
+
             for switchId in range(numSwitches): # create switch(es)
-                switchDpid = f'{switchId:x}'
+                switchDpid = f'{monitorId+1:014x}{switchId+1:02x}'
                 switchName = f's{switchId}'
                 switch = self.addSwitch(switchName, dpid = switchDpid)
+                info(f"Created switch {switchName} with DPID {switchDpid}\n")
+
                 # create link between monitor and switch
                 linkMonitorToSwitch = self.addLink(switch, monitor)
                 
@@ -41,7 +57,7 @@ class ncmTopo(Topo):
                     hostName = f'h{switchId}{hostId}'
                     host = self.addHost(hostName, ip = hostIp)
                     # create link between switch and host
-                    link = self.addLink(host, switch)
+                    linkHostToSwitch = self.addLink(host, switch)
 
                     # check the number of created host
                     numHostCreated = switchId * numSwitchToHosts + hostId
@@ -54,7 +70,8 @@ def main():
     net = Mininet(
         topo = topo, 
         link = TCLink, 
-        controller = RemoteController, 
+        switch = IPv6DisabledSwitch,
+        controller = None,
         autoSetMacs = True, 
         autoStaticArp = True
     )
@@ -68,6 +85,11 @@ def main():
     )
 
     net.start()
+
+    for host in net.hosts:
+        host.cmd('sysctl -w net.ipv6.conf.all.disable_ipv6=1')
+        host.cmd('sysctl -w net.ipv6.conf.default.disable_ipv6=1')
+        host.cmd('sysctl -w net.ipv6.conf.lo.disable_ipv6=1')
 
     # for that using WSL
     configureSwitches(net)
