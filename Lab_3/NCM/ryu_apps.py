@@ -1,22 +1,25 @@
+'''
+Code Author: Peng, Caikun
+File Name: ryuController.py
+Create Date: 17/07/2024 
+Last Edit Date: 18/07/2024
+Description: run `ryu-manager` command with several apps
+Dependencies: subprocess
+'''
+
 import subprocess
 
-# 定义要运行的Ryu应用程序脚本
 ryu_apps = [
-    'ryuController.py',
+    # 'ryuController.py',
+    'simple_switch_13.py',
+    'ofctl_rest.py',    
     'rest_topology.py',
     'rest_conf_switch.py',
-    'rest_conf_port.py',
-    'ofctl_rest.py'
+    'rest_port.py',
 ]
 
-# 启动每个Ryu应用程序脚本
-processes = []
+command = ['ryu-manager'] + ryu_apps
 
-for app in ryu_apps:
-    # 使用subprocess.Popen启动每个脚本
-    process = subprocess.Popen(['ryu-manager', app])
-    processes.append(process)
+# print(command)
 
-# 等待所有进程完成
-for process in processes:
-    process.wait()
+process = subprocess.Popen(command)
