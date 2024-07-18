@@ -10,11 +10,19 @@ Dependencies: argparse, mininet, json
 import argparse
 from mininet.net import Mininet
 from mininet.topo import Topo
-from mininet.node import Controller, OVSSwitch, RemoteController
+from mininet.node import Controller, OVSKernelSwitch, RemoteController
 from mininet.cli import CLI
 from mininet.link import TCLink
 from mininet.log import setLogLevel, info
 import json
+
+class IPv6DisabledSwitch(OVSKernelSwitch):
+    "Custom switch class with IPv6 disabled"
+    def start(self, controllers):
+        super(IPv6DisabledSwitch, self).start(controllers)
+        # close IPv6
+        self.cmd('sysctl -w net.ipv6.conf.all.disable_ipv6=1')
+        self.cmd('sysctl -w net.ipv6.conf.default.disable_ipv6=1')
 
 class fat_tree_topo(Topo):
     def build(self):
@@ -169,7 +177,7 @@ def main(k, ryu):
                       link = TCLink,
                       controller = RemoteController,
                       autoSetMacs = True, 
-                      switch = OVSSwitch)
+                      switch = IPv6DisabledSwitch)
     else:
         net = Mininet(topo = topo, 
                       link = TCLink, 
@@ -179,7 +187,7 @@ def main(k, ryu):
 
     net.addController('Ctl0', controller = RemoteController, 
                                       ip = '127.0.0.1', 
-                                    port = 6633,
+                                    port = 6653,
                                protocols = "OpenFlow13")
 
     ip_mac_table = {}
@@ -190,6 +198,11 @@ def main(k, ryu):
         json.dump(ip_mac_table, f,indent=4)
 
     net.start()
+
+    for host in net.hosts:
+        host.cmd('sysctl -w net.ipv6.conf.all.disable_ipv6=1')
+        host.cmd('sysctl -w net.ipv6.conf.default.disable_ipv6=1')
+        host.cmd('sysctl -w net.ipv6.conf.lo.disable_ipv6=1')
 
     if ryu:
         configure_switches(net, k)
