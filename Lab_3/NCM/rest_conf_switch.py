@@ -14,6 +14,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Modification:
+# - 2024-07-18: Removed `/v1.0` from all `/v1.0/conf` endpoints to 
+#               simplify command input. 
+# - 2024-07-18: Added import for `WSGIApplication` in 
+#               `from ryu.app.wsgi import ControllerBase` on line 28.
+# - 2024-07-18: Added `'wsgi': WSGIApplication` on line 151.
+
 """
 This module provides a set of REST API for switch configuration.
 - Per-switch Key-Value store

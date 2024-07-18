@@ -13,6 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Modifications:
+# - 2024-07-18: Removed `/v1.0` from all `/v1.0/topology` endpoints 
+#               to simplify command input
+
 import json
 
 from ryu.app.wsgi import ControllerBase
