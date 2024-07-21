@@ -43,6 +43,12 @@ The versions of software used in this project are:
 
 ## REST API URL
 
+URLs used in this project
+```
+http://<controllerIP>:<controllerPort>/<field>/<devices>/<deviceID>/<name>
+```
+
+Get more information in [Wiki - REST API Documentation](https://github.com/Caikun-Peng/TELE4642_Lab/wiki/REST-API-Documentation)
 
 # Scripts Description
 ## net.py
