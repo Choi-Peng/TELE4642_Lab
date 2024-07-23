@@ -9,9 +9,11 @@ Description: REST API for switch configuration,
 Dependencies: json, ryu, subprocess
 '''
 
+import logging
 import json
 import subprocess
 import os
+import ast
 
 from ryu.base import app_manager
 from ryu.controller import ofp_event
@@ -23,11 +25,43 @@ from ryu.app.wsgi import ControllerBase
 from ryu.app.wsgi import Response
 from ryu.app.wsgi import route
 from ryu.app.wsgi import WSGIApplication
-# from ryu.app.ofctl_rest import StatsController as rest
-from ryu.app.ofctl_rest import StatsController
 from ryu.lib import dpid as dpid_lib
-from ryu.lib import ofctl_v1_3 as ofctl
+from ryu.lib import ofctl_v1_3
 from ryu.topology.api import get_switch, get_link, get_host
+
+LOG = logging.getLogger('ncm_api')
+
+def stats_method(method):
+    def wrapper(self, req, dpid, *args, **kwargs):
+        # Get datapath instance from DPSet
+        try:
+            dp = self.dpset.get(int(str(dpid), 0))
+        except ValueError:
+            LOG.exception('Invalid dpid: %s', dpid)
+            return Response(status=400)
+        if dp is None:
+            LOG.error('No such Datapath: %s', dpid)
+            return Response(status=404)
+
+        # Get lib/ofctl_* module
+        ofctl = ofctl_v1_3
+
+        # Invoke StatsController method
+        try:
+            ret = method(self, req, dp, ofctl, *args, **kwargs)
+            if isinstance(ret, Response):
+                return ret
+            return Response(content_type='application/json',
+                            body=json.dumps(ret))
+        except ValueError:
+            LOG.exception('Invalid syntax: %s', req.body)
+            return Response(status=400)
+        except AttributeError:
+            LOG.exception('Unsupported OF request in this version: %s',
+                          dp.ofproto.OFP_VERSION)
+            return Response(status=501)
+
+    return wrapper
 
 class ncmController(ControllerBase):
     def __init__(self, req, link, data, **config):
@@ -35,12 +69,19 @@ class ncmController(ControllerBase):
         self.ncm_api_app = data['ncm_api_app']
         self.dpset = data['dpset']
         self.waiters = data['waiters']
-        self.link = link
-        print(f'link: {link}')
-        print(f'data: {data}')
 
     # region topo 
     urlTopo = '/topo'
+    ## list dpid
+    @route('topo', urlTopo + '/dpid', methods=['GET'])
+    def getDpids(self, req, **kwargs):
+        body = self.get_dipds(req, **kwargs)
+        return Response(content_type='application/json', body=body)
+
+    def get_dipds(self, req, **kwargs):
+        dps = list(self.dpset.dps.keys())
+        body = json.dumps(dps)
+        return body
 
     ## switches
     urlTopoSwitches = urlTopo + '/switches'
@@ -252,216 +293,132 @@ class ncmController(ControllerBase):
 
     # endregion
 
-    # # region flow
-    # urlFlow = '/flow'
-    # ## switches
-    # urlFlowSwitches = urlFlow + '/switches'
-    # @route('flow', urlFlowSwitches, methods=['GET'])
-    # def listFlows(self, reg, **kwargs):
-    #     body = self.getFlow(reg, **kwargs)
-    #     return body
+    # region flow
+    urlFlow = '/flow'
+    ## switches
+    urlFlowSwitches = urlFlow + '/switches'
+    @route('flow', urlFlowSwitches, methods=['GET'])
+    def listFlows(self, reg, **kwargs):
+        dpids = json.loads(self.get_dipds(reg, **kwargs))
+        # print(dpids, len(dpids), type(dpids))
+        flows = {}
+        for dpid in dpids:
+            # print(dpid)
+            kwargs['dpid'] = dpid
+            # print(kwargs)
+            flow = self.getFlow(reg, **kwargs)
+            flow = json.loads(flow.body)
+            flows[str(dpid)] = flow[str(dpid)]
+        body = Response(content_type='application/json', body=json.dumps(flows))
+        return body
     
-    # @route('flow', urlFlowSwitches, methods=['PUT'])
-    # def setFlows(self, reg, **kwargs):
-    #     body = self.putFlow(reg, **kwargs)
-    #     return body
+    @route('flow', urlFlowSwitches, methods=['PUT'])
+    def setFlows(self, reg, **kwargs):
+        body = self.putFlow(reg, **kwargs)
+        return body
 
-    # @route('flow', urlFlowSwitches, methods=['DELETE'])
-    # def delFlows(self, reg, **kwargs):
-    #     body = self.deleteFlow(reg, **kwargs)
-    #     return body
+    @route('flow', urlFlowSwitches, methods=['DELETE'])
+    def delFlows(self, reg, **kwargs):
+        body = self.deleteFlow(reg, **kwargs)
+        return body
 
-    # urlFlowSwitch = urlFlowSwitches + '/{dpid}'
-    # @route('flow', urlFlowSwitch, methods=['GET'])
-    # def listFlow(self, reg, **kwargs):
-    #     # return ofctl.get_flow_stats(dp, self.waiters, {})
-    #     body = self.getFlow(reg, **kwargs)
-    #     return body
+    urlFlowSwitch = urlFlowSwitches + '/{dpid}'
+    @route('flow', urlFlowSwitch, methods=['GET'])
+    def listFlow(self, reg, **kwargs):
+        # print('listFlow')
+        body = self.getFlow(reg, **kwargs)
+        return body
 
-    # @route('flow', urlFlowSwitch, methods=['GET'])
-    # def listFlow(self, req, **kwargs):
-    #     try:
-    #         dpid = None
-    #         if 'dpid' in kwargs:
-    #             dpid = parse_dpid(kwargs['dpid'])
-    #             dpid = dpid_lib.str_to_dpid(dpid)
-    #             print(f'dpid: {dpid}')
-    #         dp = self.dpset.get(dpid)
-    #         print(f'dp: {dp}')
-    #         if dp is None:
-    #             return Response(status=404, body=json.dumps({'error': 'datapath not found'}))
+    @route('flow', urlFlowSwitch, methods=['PUT'])
+    def setFlow(self, reg, **kwargs):
+        body = self.putFlow(reg, **kwargs)
+        return body
 
-    #         print(f'ofctl: {ofctl}')
-    #         flow_stats = StatsController.get_flow_stats_api(req, dp, ofctl, {})
-    #         print(f'flow_stats: {flow_stats}')
-    #         return Response(content_type='application/json', body=json.dumps(flow_stats))
+    @route('flow', urlFlowSwitch, methods=['DELETE'])
+    def delFlow(self, reg, **kwargs):
+        body = self.deleteFlow(reg, **kwargs)
+        return body
 
+    urlFlowSwitchTable = urlFlowSwitch + '/{tableNum}'
+    @route('flow', urlFlowSwitchTable, methods=['GET'])
+    def listFlowTable(self, reg, **kwargs):
+        body = self.getFlow(reg, **kwargs)
+        return body
 
-    #         controller_instance = StatsController(data={'dpset': app.dpset, 'waiters': app.waiters})
-    #         print(f'controller_instance: {controller_instance}')
+    @route('flow', urlFlowSwitchTable, methods=['PUT'])
+    def setFlowTable(self, reg, **kwargs):
+        body = self.putFlow(reg, **kwargs)
+        return body
 
-    #         class DummyRequest:
-    #             body = ''
-    #             json = {}
+    @route('flow', urlFlowSwitchTable, methods=['DELETE'])
+    def delFlowTable(self, reg, **kwargs):
+        body = self.deleteFlow(reg, **kwargs)
+        return body
 
-    #         req = DummyRequest()
-    
-    #         # Using the ofctl library to get flow stats
-    #         print(f'ofctl: {ofctl}')
-    #         flow_stats = controller_instance.get_flow_stats_api(req, dp, ofctl, {})
-    #         print(f'flow_stats: {flow_stats}')
-    #         return Response(content_type='application/json', body=json.dumps(flow_stats))
+    @stats_method
+    def getFlow(self, req, dp, ofctl, **kwargs):
+        try:
+            flow = req.json if req.body else {}
+            # print(f'get flow: {flow}')
+            flow_stats = ofctl.get_flow_stats(dp, self.waiters, flow)
+            for dpid in flow_stats:
+                # print(flow_stats[dpid])
+                formatted_flows = {dpid: []}
+                for flow in flow_stats[dpid]:
+                    if 'tableNum' in kwargs:
+                        if int(kwargs['tableNum']) == int(flow.get('table_id')):
+                            formatted_flow = {
+                                "priority": flow.get('priority'),
+                                "cookie": flow.get('cookie'),
+                                "idle_timeout": flow.get('idle_timeout'),
+                                "hard_timeout": flow.get('hard_timeout'),
+                                "actions": [action for action in flow.get('actions', [])],
+                                "match": {k: v for k, v in flow.get('match', {}).items()},
+                                "byte_count": flow.get('byte_count'),
+                                "duration_sec": flow.get('duration_sec'),
+                                "duration_nsec": flow.get('duration_nsec'),
+                                "packet_count": flow.get('packet_count'),
+                                "table_id": flow.get('table_id')
+                            }    
+                    else:
+                        formatted_flow = {
+                            "priority": flow.get('priority'),
+                            "cookie": flow.get('cookie'),
+                            "idle_timeout": flow.get('idle_timeout'),
+                            "hard_timeout": flow.get('hard_timeout'),
+                            "actions": [action for action in flow.get('actions', [])],
+                            "match": {k: v for k, v in flow.get('match', {}).items()},
+                            "byte_count": flow.get('byte_count'),
+                            "duration_sec": flow.get('duration_sec'),
+                            "duration_nsec": flow.get('duration_nsec'),
+                            "packet_count": flow.get('packet_count'),
+                            "table_id": flow.get('table_id')
+                        }
+                formatted_flows[dpid].append(formatted_flow)
 
-    #     except Exception as e:
-    #         return Response(content_type='application/json', body=json.dumps({'error': str(e)}), status=500)
-    
-    # # def fetch_flow_stats(dpid):
-    # #     # You must obtain an instance of datapath (dp) using dpid
-    # #     dp = self.dpset.get(dpid)
-    # #     if not dp:
-    # #         raise ValueError("No such datapath")
+            return formatted_flows
 
-    # #     # Instantiate the controller with appropriate data
-    # #     controller_instance = StatsController(request=None, link=None, data={'dpset': self.dpset, 'waiters': self.waiters})
-        
-    # #     # Mimicking a request object if necessary
-    # #     class DummyRequest:
-    # #         body = ''
-    # #         json = {}
+        except Exception as e:
+            error_message = {'status': 'failure', 'reason': str(e)}
+            return Response(content_type='application/json', body=json.dumps(error_message), status=500)
 
-    # #     req = DummyRequest()
-        
-    # #     # Call the method directly - this might need custom handling based on your app's architecture
-    # #     response = controller_instance.get_flow_stats_api(req, dp, ofctl_v1_3, {})
-    # #     return response        
+    def setFlow(self, reg, **kwargs):
+        try:
+            body
+            return Response(content_type='application/json', body=body)
+        except Exception as e:
+            body = json.dumps({'status': 'failure', 'reason': str(e)})
+            return Response(content_type='application/json', body=body, status=500)
 
-    # @route('flow', urlFlowSwitch, methods=['PUT'])
-    # def setFlow(self, reg, **kwargs):
-    #     body = self.putFlow(reg, **kwargs)
-    #     return body
+    def deleteFlow(self, reg, **kwargs):
+        try:
+            body
+            return Response(content_type='application/json', body=body)
+        except Exception as e:
+            body = json.dumps({'status': 'failure', 'reason': str(e)})
+            return Response(content_type='application/json', body=body, status=500)
 
-    # @route('flow', urlFlowSwitch, methods=['DELETE'])
-    # def delFlow(self, reg, **kwargs):
-    #     body = self.deleteFlow(reg, **kwargs)
-    #     return body
-
-    # urlFlowSwitchTable = urlFlowSwitch + '/{tableNum}'
-    # @route('flow', urlFlowSwitchTable, methods=['GET'])
-    # def listFlowTable(self, reg, **kwargs):
-    #     body = self.getFlow(reg, **kwargs)
-    #     return body
-
-    # @route('flow', urlFlowSwitchTable, methods=['PUT'])
-    # def setFlowTable(self, reg, **kwargs):
-    #     body = self.putFlow(reg, **kwargs)
-    #     return body
-
-    # @route('flow', urlFlowSwitchTable, methods=['DELETE'])
-    # def delFlowTable(self, reg, **kwargs):
-    #     body = self.deleteFlow(reg, **kwargs)
-    #     return body
-
-    # # def getFlow(self, reg, **kwargs):
-    # #     try: 
-    # #         dpid = None
-    # #         if 'dpid' in kwargs:
-    # #             dpid = parse_dpid(kwargs['dpid'])
-    # #             dpid = dpid_lib.str_to_dpid(dpid)
-    # #             print(f"Parsed dpid: {dpid}")
-    # #         switches = get_switch(self.ncm_api_app, dpid)
-    # #         switchesTemp = json.dumps([switch.to_dict() for switch in switches])
-    # #         print(f'switchesTemp: {switchesTemp}')
-    # #         dpids = self.get_dpid(switchesTemp)
-    # #         print(f'dpids_initial: {dpids}')
-
-    # #         for dpid in dpids:
-    # #             print(f'dpid: {dpid}')
-    # #             flow_request_body = {'dpid': dpid}
-    # #             flow_stats = rest.get_flow_stats(self.ncm_api_app, flow_request_body, 'flow')
-    # #             print(f'dpid: {dpid}')
-
-    # #             formatted_flows = {}
-    # #             for flow in flow_stats:
-    # #                 flow_dpid = flow['dpid']
-    # #                 if flow_dpid not in formatted_flows:
-    # #                     formatted_flows[flow_dpid] = []
-    # #                 flow_entry = {
-    # #                     "priority": flow.get('priority'),
-    # #                     "cookie": flow.get('cookie'),
-    # #                     "idle_timeout": flow.get('idle_timeout'),
-    # #                     "hard_timeout": flow.get('hard_timeout'),
-    # #                     "actions": [action for action in flow.get('actions', [])],
-    # #                     "match": {k: v for k, v in flow.get('match', {}).items()},
-    # #                     "byte_count": flow.get('byte_count'),
-    # #                     "duration_sec": flow.get('duration_sec'),
-    # #                     "duration_nsec": flow.get('duration_nsec'),
-    # #                     "packet_count": flow.get('packet_count'),
-    # #                     "table_id": flow.get('table_id')
-    # #                 }
-    # #                 formatted_flows[flow_dpid].append(flow_entry)
-    # #         body = json.dumps(formatted_flows)
-    # #         return Response(content_type='application/json', body=json.dumps(formatted_flows))
-    # #     except Exception as e:
-    # #         body = json.dumps({'status': 'failure', 'reason': str(e)})
-    # #         return Response(content_type='application/json', body=body, status=500)
-
-    # def getFlow(self, req, **kwargs):
-    #     try:
-    #         dpid = None
-    #         if 'dpid' in kwargs:
-    #             dpid = parse_dpid(kwargs['dpid'])
-    #             dpid = dpid_lib.str_to_dpid(dpid)
-    #         print(f'dpid: {dpid}')
-    #         dp = self.dpset.get(dpid)
-    #         print(f'dp: {dp}')
-
-    #         # Fetch flow statistics using ofctl_rest's functionality
-    #         stats = StatsController(req, dp, ofctl, **kwargs)
-    #         print(stats)
-    #         flow_stats = stats.get_flow_stats_api(req, dp, ofctl, **kwargs)
-    #         print(f'flow_stats: {flow_stats}')
-
-    #         # Format the flow entries in the desired JSON structure
-    #         formatted_flows = {str(dpid): []}
-    #         for flow in flow_stats:
-    #             formatted_flow = {
-    #                 "priority": flow.get('priority'),
-    #                 "cookie": flow.get('cookie'),
-    #                 "idle_timeout": flow.get('idle_timeout'),
-    #                 "hard_timeout": flow.get('hard_timeout'),
-    #                 "actions": [action for action in flow.get('actions', [])],
-    #                 "match": {k: v for k, v in flow.get('match', {}).items()},
-    #                 "byte_count": flow.get('byte_count'),
-    #                 "duration_sec": flow.get('duration_sec'),
-    #                 "duration_nsec": flow.get('duration_nsec'),
-    #                 "packet_count": flow.get('packet_count'),
-    #                 "table_id": flow.get('table_id')
-    #             }
-    #             formatted_flows[str(dpid)].append(formatted_flow)
-
-    #         return Response(content_type='application/json', body=json.dumps(formatted_flows))
-    #     except Exception as e:
-    #         error_message = {'status': 'failure', 'reason': str(e)}
-    #         return Response(content_type='application/json', body=json.dumps(error_message), status=500)
-
-
-    # def setFlow(self, reg, **kwargs):
-    #     try:
-    #         body
-    #         return Response(content_type='application/json', body=body)
-    #     except Exception as e:
-    #         body = json.dumps({'status': 'failure', 'reason': str(e)})
-    #         return Response(content_type='application/json', body=body, status=500)
-
-    # def deleteFlow(self, reg, **kwargs):
-    #     try:
-    #         body
-    #         return Response(content_type='application/json', body=body)
-    #     except Exception as e:
-    #         body = json.dumps({'status': 'failure', 'reason': str(e)})
-    #         return Response(content_type='application/json', body=body, status=500)
-
-    # # endregion
+    # endregion
 
     # region functions
     def get_dpid(self, switches):
@@ -551,3 +508,43 @@ class ncmAPI(app_manager.RyuApp):
 
         wsgi.register(ncmController, data)
 
+    @set_ev_cls([ofp_event.EventOFPFlowStatsReply,], MAIN_DISPATCHER)
+    def stats_reply_handler(self, ev):
+        # print('stats_reply_handler')
+        msg = ev.msg
+        dp = msg.datapath
+
+        if dp.id not in self.waiters:
+            return
+        if msg.xid not in self.waiters[dp.id]:
+            return
+        lock, msgs = self.waiters[dp.id][msg.xid]
+        msgs.append(msg)
+
+        flags = 0
+        if dp.ofproto.OFP_VERSION >= ofproto_v1_3.OFP_VERSION:
+            flags = dp.ofproto.OFPMPF_REPLY_MORE
+
+        if msg.flags & flags:
+            return
+        del self.waiters[dp.id][msg.xid]
+        lock.set()
+
+    @set_ev_cls([ofp_event.EventOFPSwitchFeatures,
+                 ofp_event.EventOFPQueueGetConfigReply,
+                 ofp_event.EventOFPRoleReply,
+                 ], MAIN_DISPATCHER)
+    def features_reply_handler(self, ev):
+        print('features_reply_handler')
+        msg = ev.msg
+        dp = msg.datapath
+
+        if dp.id not in self.waiters:
+            return
+        if msg.xid not in self.waiters[dp.id]:
+            return
+        lock, msgs = self.waiters[dp.id][msg.xid]
+        msgs.append(msg)
+
+        del self.waiters[dp.id][msg.xid]
+        lock.set()
