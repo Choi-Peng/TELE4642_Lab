@@ -4,7 +4,7 @@ File Name: net.py
 Create Date: 16/07/2024 
 Last Edit Date: 16/07/2024
 Description: 
-Dependencies: mininet, math
+Dependencies: mininet, math, json, os
 '''
 
 from mininet.net import Mininet
@@ -14,6 +14,8 @@ from mininet.cli import CLI
 from mininet.link import TCLink
 from mininet.log import setLogLevel, info
 import math
+import json
+import os
 
 class IPv6DisabledSwitch(OVSSwitch):
     def start(self, controllers):
@@ -23,12 +25,14 @@ class IPv6DisabledSwitch(OVSSwitch):
         self.cmd('sysctl -w net.ipv6.conf.default.disable_ipv6=1')
 
 class ncmTopo(Topo):
-    def build(self):
+    def build(self,routingTable={}):
+        dpidToSwitchName = {}
         # Number of devices
-        numHosts = 10
+        numHosts = 2
         numSwitches = 1
         numMonitor  = 1
         numSwitchToHosts = math.ceil(numHosts / numSwitches)
+        numWhiteWeb  = 1 
         
         # create monitor and links
         for monitorId in range(numMonitor): # create monitor(s)
@@ -36,36 +40,82 @@ class ncmTopo(Topo):
             monitorName = f'm{monitorId}'
             monitor = self.addSwitch(monitorName, dpid = monitorDpid)
             info(f"Created monitor {monitorName} with DPID {monitorDpid}\n")
-
+            routingTable[monitorDpid] = []
+            dpidToSwitchName[monitorDpid] = [monitorName]
             # create two hosts as servers
-            internet = self.addHost('internet', ip = '8.8.8.8')
             localSever = self.addHost('server', ip = '10.0.0.1')
-            linkMonitorToInternet = self.addLink(internet, monitor)
             linkMonitorToServer = self.addLink(localSever, monitor)
+            routingTable[monitorDpid].append({
+                "priority": 10,
+                'actions':['output:1'],
+                'match':{'ip,nw_dst': '10.0.0.1'},
+                "table_id": 0
+            })
+            for whiteWeb in range(numWhiteWeb):
+                whiteWebIP = f'10.1.{monitorId}.{whiteWeb+1}'
+                internet = self.addHost(f'whiteWeb{whiteWeb}', ip = whiteWebIP)
+                linkMonitorToInternet = self.addLink(internet, monitor)
+                routingTable[monitorDpid].append({
+                    "priority": 10,
+                    'actions':['output:2'],
+                    'match':{'ip,nw_dst': whiteWebIP},
+                    "table_id": 0
+                })
 
             for switchId in range(numSwitches): # create switch(es)
                 switchDpid = f'{monitorId+1:014x}{switchId+1:02x}'
                 switchName = f's{switchId}'
                 switch = self.addSwitch(switchName, dpid = switchDpid)
                 info(f"Created switch {switchName} with DPID {switchDpid}\n")
-
+                routingTable[switchDpid] = []
+                dpidToSwitchName[switchDpid] = [switchName]
                 # create link between monitor and switch
                 linkMonitorToSwitch = self.addLink(switch, monitor)
-                
+                routingTable[monitorDpid].append({
+                    "priority": 10,
+                    'actions':['output:3'],
+                    'match':{'in_port': 1},
+                    "table_id": 0
+                })
+                routingTable[monitorDpid].append({
+                    "priority": 10,
+                    'actions':['output:3'],
+                    'match':{'in_port': 2},
+                    "table_id": 0
+                })
+                routingTable[switchDpid].append({
+                    "priority": 1,
+                    'actions':['output:1'],
+                    'match':{},
+                    "table_id": 0
+                })
+
                 for hostId in range(numSwitchToHosts): # create host(s)
                     hostIp = f'10.0.{switchId}.{hostId+2}' 
                     hostName = f'h{switchId}{hostId}'
                     host = self.addHost(hostName, ip = hostIp)
                     # create link between switch and host
                     linkHostToSwitch = self.addLink(host, switch)
+                    routingTable[switchDpid].append({
+                        "priority": 10,
+                        'actions':[f'output:{hostId+2}'],
+                        'match':{'ip,nw_dst': hostIp},
+                        "table_id": 0
+                    })
 
                     # check the number of created host
                     numHostCreated = switchId * numSwitchToHosts + hostId
                     if numHostCreated == numHosts:
                         break
+        
+        with open('routing_table.json', 'w') as file:
+            json.dump(routingTable, file, indent = 2)
+        with open('dpidToSwitchName.json', 'w') as file:
+            json.dump(dpidToSwitchName, file, indent = 2)
 
 def main():
-    topo = ncmTopo()
+    routingTable = {}
+    topo = ncmTopo(routingTable)
 
     net = Mininet(
         topo = topo, 
@@ -91,20 +141,29 @@ def main():
         host.cmd('sysctl -w net.ipv6.conf.default.disable_ipv6=1')
         host.cmd('sysctl -w net.ipv6.conf.lo.disable_ipv6=1')
 
-    # for that using WSL
-    configureSwitches(net)
+    configureSwitches(net,routingTable)
 
     CLI(net)
 
     net.stop()
+    os.system('mn -c')
 
-def configureSwitches(net):
+def configureSwitches(net,routingTable):
     num_switches = len(net.switches)
     for switch in net.switches:
         switch_name = switch.name
+        # for that using WSL
         set_br = f'ovs-vsctl set bridge {switch_name} datapath_type=netdev'
         switch.cmd(set_br)
-
+        switch_dpid = switch.dpid
+        for route in routingTable[switch_dpid]:
+            priority = route['priority']
+            actions = ",".join(route["actions"])
+            match = route['match']
+            table_id = route['table_id']
+            match_str = ",".join([f"{key}={value}" for key, value in match.items()])
+            set_route = f'ovs-ofctl add-flow {switch_name} "table={table_id},priority={priority},{match_str},actions={actions}"'
+            os.system(set_route)
 
 if __name__ == '__main__':
     setLogLevel('info')

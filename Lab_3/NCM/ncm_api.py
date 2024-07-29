@@ -13,12 +13,12 @@ import logging
 import json
 import subprocess
 import os
-import ast
 
+from webob import Request
 from ryu.base import app_manager
 from ryu.controller import ofp_event
 from ryu.controller import dpset
-from ryu.controller.handler import MAIN_DISPATCHER
+from ryu.controller.handler import MAIN_DISPATCHER, CONFIG_DISPATCHER
 from ryu.controller.handler import set_ev_cls
 from ryu.ofproto import ofproto_v1_3
 from ryu.app.wsgi import ControllerBase
@@ -30,6 +30,18 @@ from ryu.lib import ofctl_v1_3
 from ryu.topology.api import get_switch, get_link, get_host
 
 LOG = logging.getLogger('ncm_api')
+
+with open('routing_table.json', 'r') as file:
+    routing_table_data = file.read()
+    if not routing_table_data.strip():  # Check if the file is empty
+        raise ValueError("The routing_table.json file is empty.")
+    routingTable = json.loads(routing_table_data)
+
+with open('dpidToSwitchName.json', 'r') as file:
+    dpidToSwitchName = file.read()
+    if not dpidToSwitchName.strip():  # Check if the file is empty
+        raise ValueError("The dpidToSwitchName.json file is empty.")
+    dpidToSwitchName = json.loads(dpidToSwitchName)
 
 def stats_method(method):
     def wrapper(self, req, dpid, *args, **kwargs):
@@ -155,7 +167,6 @@ class ncmController(ControllerBase):
             body = json.dumps({'status': 'failure', 'reason': str(e)})
             return Response(content_type='application/json', body=body)
 
-
     # endregion
     
     # region rate
@@ -181,6 +192,7 @@ class ncmController(ControllerBase):
 
     @route('rate', urlRateSwitch, methods=['PUT'])
     def setRate(self, req, **kwargs):
+        print('putting rates')
         body = self.putRate(req, **kwargs)
         return body
 
@@ -192,6 +204,7 @@ class ncmController(ControllerBase):
 
     @route('rate', urlRateSwitchPort, methods=['PUT'])
     def setRatePort(self, req, **kwargs):
+        print('putting rates')
         body = self.putRate(req, **kwargs)
         return body
 
@@ -308,13 +321,14 @@ class ncmController(ControllerBase):
             # print(kwargs)
             flow = self.getFlow(reg, **kwargs)
             flow = json.loads(flow.body)
+            print(flow)
             flows[str(dpid)] = flow[str(dpid)]
         body = Response(content_type='application/json', body=json.dumps(flows))
         return body
-    
+
     @route('flow', urlFlowSwitches, methods=['PUT'])
-    def setFlows(self, reg, **kwargs):
-        body = self.putFlow(reg, **kwargs)
+    def setFlows(self, reg, **kwargs): # set default routing rules
+        body = self.putDefaultFlow(reg, **kwargs)
         return body
 
     @route('flow', urlFlowSwitches, methods=['DELETE'])
@@ -325,12 +339,13 @@ class ncmController(ControllerBase):
     urlFlowSwitch = urlFlowSwitches + '/{dpid}'
     @route('flow', urlFlowSwitch, methods=['GET'])
     def listFlow(self, reg, **kwargs):
-        # print('listFlow')
+        print('listFlow')
         body = self.getFlow(reg, **kwargs)
         return body
 
     @route('flow', urlFlowSwitch, methods=['PUT'])
     def setFlow(self, reg, **kwargs):
+        print('setFlow')
         body = self.putFlow(reg, **kwargs)
         return body
 
@@ -339,7 +354,7 @@ class ncmController(ControllerBase):
         body = self.deleteFlow(reg, **kwargs)
         return body
 
-    urlFlowSwitchTable = urlFlowSwitch + '/{tableNum}'
+    urlFlowSwitchTable = urlFlowSwitch + '/{tableID}'
     @route('flow', urlFlowSwitchTable, methods=['GET'])
     def listFlowTable(self, reg, **kwargs):
         body = self.getFlow(reg, **kwargs)
@@ -365,8 +380,8 @@ class ncmController(ControllerBase):
                 # print(flow_stats[dpid])
                 formatted_flows = {dpid: []}
                 for flow in flow_stats[dpid]:
-                    if 'tableNum' in kwargs:
-                        if int(kwargs['tableNum']) == int(flow.get('table_id')):
+                    if 'tableID' in kwargs:
+                        if int(kwargs['tableID']) == int(flow.get('table_id')):
                             formatted_flow = {
                                 "priority": flow.get('priority'),
                                 "cookie": flow.get('cookie'),
@@ -401,10 +416,52 @@ class ncmController(ControllerBase):
         except Exception as e:
             error_message = {'status': 'failure', 'reason': str(e)}
             return Response(content_type='application/json', body=json.dumps(error_message), status=500)
-
-    def setFlow(self, reg, **kwargs):
+    
+    def putDefaultFlow(self, reg, **kwargs):
         try:
-            body
+            data = json.loads(reg.body.decode("utf-8"))
+            dpids = json.loads(self.get_dipds(reg, **kwargs))
+            for switch_dpid in dpids:
+                switch_dpid = parse_dpid(switch_dpid)
+                switch_name = dpidToSwitchName[switch_dpid][0]
+                os.system(f'ovs-ofctl del-flow {switch_name}')
+                for route in routingTable[switch_dpid]:
+                    priority = route['priority']
+                    actions = ",".join(route["actions"])
+                    match = route['match']
+                    table_id = route['table_id']
+                    match_str = ",".join([f"{key}={value}" for key, value in match.items()])
+                    set_route = f'ovs-ofctl add-flow {switch_name} "table={table_id},priority={priority},{match_str},actions={actions}"'
+                    try: 
+                        os.system(set_route)
+                    except Exception as e:
+                        body = json.dumps({'status': 'failure', 'reason': str(e)})
+                        return Response(content_type='application/json', body=body, status=500) 
+            body = json.dumps({'status': 'success'})
+            return Response(content_type='application/json', body=body)
+        except Exception as e:
+            body = json.dumps({'status': 'failure', 'reason': str(e)})
+            return Response(content_type='application/json', body=body, status=500)
+
+    def putFlow(self, reg, **kwargs):
+        try:
+            route = json.loads(str({reg.body.decode("utf-8")}).replace('\'',''))
+            switch_dpid = parse_dpid(kwargs['dpid'])
+            switch_name = dpidToSwitchName[switch_dpid][0]
+            priority = route['priority']
+            actions = ",".join(route["actions"])
+            match = route['match']
+            if 'tableID' in kwargs:
+                table_id = kwargs['tableID']
+            else:
+                table_id = route['table_id']
+            match_str = ",".join([f"{key}={value}" for key, value in match.items()])
+            set_route = f'ovs-ofctl add-flow {switch_name} "table={table_id},priority={priority},{match_str},actions={actions}"'
+            test = os.system(set_route)
+            if test == 256:  
+                body = json.dumps({'status': 'failure', 'reason': 'ovs-ofctl: actions are invalid with specified match (OFPBIC_BAD_TABLE_ID)'})
+                return Response(content_type='application/json', body=body, status=406)
+            body = json.dumps({'status': 'success'})
             return Response(content_type='application/json', body=body)
         except Exception as e:
             body = json.dumps({'status': 'failure', 'reason': str(e)})
@@ -508,7 +565,23 @@ class ncmAPI(app_manager.RyuApp):
 
         wsgi.register(ncmController, data)
 
-    @set_ev_cls([ofp_event.EventOFPFlowStatsReply,], MAIN_DISPATCHER)
+    @set_ev_cls([ofp_event.EventOFPStatsReply,
+                 ofp_event.EventOFPDescStatsReply,
+                 ofp_event.EventOFPFlowStatsReply,
+                 ofp_event.EventOFPAggregateStatsReply,
+                 ofp_event.EventOFPTableStatsReply,
+                 ofp_event.EventOFPTableFeaturesStatsReply,
+                 ofp_event.EventOFPPortStatsReply,
+                 ofp_event.EventOFPQueueStatsReply,
+                 ofp_event.EventOFPQueueDescStatsReply,
+                 ofp_event.EventOFPMeterStatsReply,
+                 ofp_event.EventOFPMeterFeaturesStatsReply,
+                 ofp_event.EventOFPMeterConfigStatsReply,
+                 ofp_event.EventOFPGroupStatsReply,
+                 ofp_event.EventOFPGroupFeaturesStatsReply,
+                 ofp_event.EventOFPGroupDescStatsReply,
+                 ofp_event.EventOFPPortDescStatsReply
+                 ], MAIN_DISPATCHER)
     def stats_reply_handler(self, ev):
         # print('stats_reply_handler')
         msg = ev.msg
@@ -530,21 +603,21 @@ class ncmAPI(app_manager.RyuApp):
         del self.waiters[dp.id][msg.xid]
         lock.set()
 
-    @set_ev_cls([ofp_event.EventOFPSwitchFeatures,
-                 ofp_event.EventOFPQueueGetConfigReply,
-                 ofp_event.EventOFPRoleReply,
-                 ], MAIN_DISPATCHER)
-    def features_reply_handler(self, ev):
-        print('features_reply_handler')
-        msg = ev.msg
-        dp = msg.datapath
+    # @set_ev_cls([ofp_event.EventOFPSwitchFeatures,
+    #              ofp_event.EventOFPQueueGetConfigReply,
+    #              ofp_event.EventOFPRoleReply,
+    #              ], MAIN_DISPATCHER)
+    # def features_reply_handler(self, ev):
+    #     print('features_reply_handler')
+    #     msg = ev.msg
+    #     dp = msg.datapath
 
-        if dp.id not in self.waiters:
-            return
-        if msg.xid not in self.waiters[dp.id]:
-            return
-        lock, msgs = self.waiters[dp.id][msg.xid]
-        msgs.append(msg)
+    #     if dp.id not in self.waiters:
+    #         return
+    #     if msg.xid not in self.waiters[dp.id]:
+    #         return
+    #     lock, msgs = self.waiters[dp.id][msg.xid]
+    #     msgs.append(msg)
 
-        del self.waiters[dp.id][msg.xid]
-        lock.set()
+    #     del self.waiters[dp.id][msg.xid]
+    #     lock.set()
