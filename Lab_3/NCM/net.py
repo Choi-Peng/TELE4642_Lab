@@ -28,11 +28,11 @@ class ncmTopo(Topo):
     def build(self,routingTable={}):
         dpidToSwitchName = {}
         # Number of devices
-        numHosts = 2
-        numSwitches = 1
+        numHosts = 4
+        numSwitches = 2
         numMonitor  = 1
         numSwitchToHosts = math.ceil(numHosts / numSwitches)
-        numWhiteWeb  = 1 
+        numWhiteWeb  = 1
         
         # create monitor and links
         for monitorId in range(numMonitor): # create monitor(s)
@@ -51,13 +51,13 @@ class ncmTopo(Topo):
                 'match':{'ip,nw_dst': '10.0.0.1'},
                 "table_id": 0
             })
-            for whiteWeb in range(numWhiteWeb):
-                whiteWebIP = f'10.1.{monitorId}.{whiteWeb+1}'
-                internet = self.addHost(f'whiteWeb{whiteWeb}', ip = whiteWebIP)
-                linkMonitorToInternet = self.addLink(internet, monitor)
+            for whiteWebNum in range(numWhiteWeb):
+                whiteWebIP = f'10.1.{monitorId}.{whiteWebNum+1}'
+                whiteWeb = self.addHost(f'whiteWeb{whiteWebNum}', ip = whiteWebIP)
+                linkMonitorToInternet = self.addLink(whiteWeb, monitor)
                 routingTable[monitorDpid].append({
                     "priority": 10,
-                    'actions':['output:2'],
+                    'actions':[f'output:{whiteWebNum+2}'],
                     'match':{'ip,nw_dst': whiteWebIP},
                     "table_id": 0
                 })
@@ -73,14 +73,8 @@ class ncmTopo(Topo):
                 linkMonitorToSwitch = self.addLink(switch, monitor)
                 routingTable[monitorDpid].append({
                     "priority": 10,
-                    'actions':['output:3'],
-                    'match':{'in_port': 1},
-                    "table_id": 0
-                })
-                routingTable[monitorDpid].append({
-                    "priority": 10,
-                    'actions':['output:3'],
-                    'match':{'in_port': 2},
+                    'actions':[f'output:{switchId+whiteWebNum+3}'],
+                    'match':{'ip,nw_dst': f'10.0.{switchId}.0/24'},
                     "table_id": 0
                 })
                 routingTable[switchDpid].append({
@@ -104,7 +98,7 @@ class ncmTopo(Topo):
                     })
 
                     # check the number of created host
-                    numHostCreated = switchId * numSwitchToHosts + hostId
+                    numHostCreated = switchId * numSwitchToHosts + hostId + 1
                     if numHostCreated == numHosts:
                         break
         

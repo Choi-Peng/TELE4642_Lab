@@ -313,21 +313,20 @@ class ncmController(ControllerBase):
     @route('flow', urlFlowSwitches, methods=['GET'])
     def listFlows(self, reg, **kwargs):
         dpids = json.loads(self.get_dipds(reg, **kwargs))
-        # print(dpids, len(dpids), type(dpids))
         flows = {}
         for dpid in dpids:
-            # print(dpid)
             kwargs['dpid'] = dpid
-            # print(kwargs)
+            flows[str(dpid)] = []
             flow = self.getFlow(reg, **kwargs)
-            flow = json.loads(flow.body)
-            print(flow)
-            flows[str(dpid)] = flow[str(dpid)]
+            # print(type(flow),'\n',flow)
+            flows[str(dpid)] = json.loads(flow)
+        # print(type(flows),'\n',flows)
         body = Response(content_type='application/json', body=json.dumps(flows))
         return body
 
     @route('flow', urlFlowSwitches, methods=['PUT'])
     def setFlows(self, reg, **kwargs): # set default routing rules
+        print('set default routing rules')
         body = self.putDefaultFlow(reg, **kwargs)
         return body
 
@@ -370,48 +369,45 @@ class ncmController(ControllerBase):
         body = self.deleteFlow(reg, **kwargs)
         return body
 
-    @stats_method
-    def getFlow(self, req, dp, ofctl, **kwargs):
+    def getFlow(self, req, **kwargs):
+        import subprocess
         try:
-            flow = req.json if req.body else {}
-            # print(f'get flow: {flow}')
-            flow_stats = ofctl.get_flow_stats(dp, self.waiters, flow)
-            for dpid in flow_stats:
-                # print(flow_stats[dpid])
-                formatted_flows = {dpid: []}
-                for flow in flow_stats[dpid]:
-                    if 'tableID' in kwargs:
-                        if int(kwargs['tableID']) == int(flow.get('table_id')):
-                            formatted_flow = {
-                                "priority": flow.get('priority'),
-                                "cookie": flow.get('cookie'),
-                                "idle_timeout": flow.get('idle_timeout'),
-                                "hard_timeout": flow.get('hard_timeout'),
-                                "actions": [action for action in flow.get('actions', [])],
-                                "match": {k: v for k, v in flow.get('match', {}).items()},
-                                "byte_count": flow.get('byte_count'),
-                                "duration_sec": flow.get('duration_sec'),
-                                "duration_nsec": flow.get('duration_nsec'),
-                                "packet_count": flow.get('packet_count'),
-                                "table_id": flow.get('table_id')
-                            }    
-                    else:
-                        formatted_flow = {
-                            "priority": flow.get('priority'),
-                            "cookie": flow.get('cookie'),
-                            "idle_timeout": flow.get('idle_timeout'),
-                            "hard_timeout": flow.get('hard_timeout'),
-                            "actions": [action for action in flow.get('actions', [])],
-                            "match": {k: v for k, v in flow.get('match', {}).items()},
-                            "byte_count": flow.get('byte_count'),
-                            "duration_sec": flow.get('duration_sec'),
-                            "duration_nsec": flow.get('duration_nsec'),
-                            "packet_count": flow.get('packet_count'),
-                            "table_id": flow.get('table_id')
-                        }
-                formatted_flows[dpid].append(formatted_flow)
-
-            return formatted_flows
+            print(kwargs)
+            if 'dpid' in kwargs:
+                switch_dpid = parse_dpid(kwargs['dpid'])
+            switch_name = dpidToSwitchName[switch_dpid][0]
+            command = ["ovs-ofctl", "dump-flows", switch_name]
+            flows = subprocess.check_output(command, text=True)
+            # print(flows)
+            data=flows.split('\n',)
+            del data[0]
+            del data[-1] 
+            dicts = []
+            for element in data:
+                element_dict = {}
+                items = element.split(', ')
+                for item in items:
+                    if '=' in item:
+                        key, value = item.split('=', 1) 
+                        if " actions=" in value:
+                            value, action = value.split(" actions=", 1)
+                            if ',' in value:
+                                value, match = value.split(',',1)
+                                match_key, match_value = match.split('=', 1)
+                                element_dict[match_key.strip()] = match_value.strip()
+                            element_dict[key.strip()] = value.strip()
+                            element_dict['actions'] = action.strip()
+                        else:
+                            element_dict[key.strip()] = value.strip()
+                if 'tableID' in kwargs:
+                    print(f'tableID, {type(kwargs["tableID"])}, {kwargs["tableID"]}')
+                    print(f'table_id, {type(element_dict["table"])}, {element_dict["table"]}')
+                    if element_dict['table'] == kwargs['tableID']:
+                        print('true')
+                        dicts.append(element_dict)
+                else:
+                    dicts.append(element_dict)
+            return json.dumps(dicts)
 
         except Exception as e:
             error_message = {'status': 'failure', 'reason': str(e)}
@@ -419,12 +415,11 @@ class ncmController(ControllerBase):
     
     def putDefaultFlow(self, reg, **kwargs):
         try:
-            data = json.loads(reg.body.decode("utf-8"))
             dpids = json.loads(self.get_dipds(reg, **kwargs))
             for switch_dpid in dpids:
                 switch_dpid = parse_dpid(switch_dpid)
                 switch_name = dpidToSwitchName[switch_dpid][0]
-                os.system(f'ovs-ofctl del-flow {switch_name}')
+                os.system(f'ovs-ofctl del-flows {switch_name}')
                 for route in routingTable[switch_dpid]:
                     priority = route['priority']
                     actions = ",".join(route["actions"])
@@ -433,9 +428,9 @@ class ncmController(ControllerBase):
                     match_str = ",".join([f"{key}={value}" for key, value in match.items()])
                     set_route = f'ovs-ofctl add-flow {switch_name} "table={table_id},priority={priority},{match_str},actions={actions}"'
                     try: 
-                        os.system(set_route)
+                        state = os.system(set_route)
                     except Exception as e:
-                        body = json.dumps({'status': 'failure', 'reason': str(e)})
+                        body = json.dumps({'status': 'failure put flow', 'reason': str(e)})
                         return Response(content_type='application/json', body=body, status=500) 
             body = json.dumps({'status': 'success'})
             return Response(content_type='application/json', body=body)
@@ -457,9 +452,9 @@ class ncmController(ControllerBase):
                 table_id = route['table_id']
             match_str = ",".join([f"{key}={value}" for key, value in match.items()])
             set_route = f'ovs-ofctl add-flow {switch_name} "table={table_id},priority={priority},{match_str},actions={actions}"'
-            test = os.system(set_route)
-            if test == 256:  
-                body = json.dumps({'status': 'failure', 'reason': 'ovs-ofctl: actions are invalid with specified match (OFPBIC_BAD_TABLE_ID)'})
+            state = os.system(set_route)
+            if state == 256:  
+                body = json.dumps({'status': 'failure', 'reason': 'ovs-ofctl error'})
                 return Response(content_type='application/json', body=body, status=406)
             body = json.dumps({'status': 'success'})
             return Response(content_type='application/json', body=body)
@@ -469,11 +464,144 @@ class ncmController(ControllerBase):
 
     def deleteFlow(self, reg, **kwargs):
         try:
-            body
+            print(kwargs)
+            if 'dpid' in kwargs:
+                dpids = [kwargs['dpid']]
+            else: 
+                dpids = json.loads(self.get_dipds(reg, **kwargs))
+            for switch_dpid in dpids:
+                switch_dpid = parse_dpid(switch_dpid)
+                switch_name = dpidToSwitchName[switch_dpid][0]
+                if 'tableID' in kwargs:
+                    table_id = kwargs['tableID']
+                else: 
+                    table_id = 0
+                set_route = f'ovs-ofctl add-flow {switch_name} "cookie=0xf,table={table_id},priority=65535,actions="'
+                state = os.system(set_route)
+                if state == 256:  
+                    body = json.dumps({'status': 'failure', 'reason': 'ovs-ofctl error'})
+                    return Response(content_type='application/json', body=body, status=406)
+            body = json.dumps({'status': 'success'})
             return Response(content_type='application/json', body=body)
         except Exception as e:
             body = json.dumps({'status': 'failure', 'reason': str(e)})
             return Response(content_type='application/json', body=body, status=500)
+
+    ## deleted
+    urlFlowDeleted = urlFlow + '/deleted'
+    @route('flow', urlFlowDeleted, methods=['GET'])
+    def listDeletedFlows(self, reg, **kwargs):
+        dpids = json.loads(self.get_dipds(reg, **kwargs))
+        flows = {}
+        for dpid in dpids:
+            kwargs['dpid'] = dpid
+            flows[str(dpid)] = []
+            flow = self.getDeletedFlow(reg, **kwargs)
+            # print(type(flow),'\n',flow)
+            flows[str(dpid)] = json.loads(flow)
+        # print(type(flows),'\n',flows)
+        body = Response(content_type='application/json', body=json.dumps(flows))
+        return body
+
+    @route('flow', urlFlowDeleted, methods=['DELETE'])
+    def delDeletedFlows(self, reg, **kwargs):
+        body = self.deleteDeletedFlow(reg, **kwargs)
+        return body
+    
+    urlFlowDeletedSwitches = urlFlowDeleted + '/{dpid}'
+    @route('flow', urlFlowDeletedSwitches, methods=['GET'])
+    def listDeletedFlow(self, reg, **kwargs):
+        print('listFlow')
+        body = self.getDeletedFlow(reg, **kwargs)
+        return body
+
+    @route('flow', urlFlowDeletedSwitches, methods=['DELETE'])
+    def delDeletedFlow(self, reg, **kwargs):
+        body = self.deleteDeletedFlow(reg, **kwargs)
+        return body
+
+    urlFlowDeletedTables = urlFlowDeletedSwitches + '/{tableID}'
+    @route('flow', urlFlowDeletedTables, methods=['GET'])
+    def listDeletedTable(self, reg, **kwargs):
+        print('listFlow')
+        body = self.getDeletedFlow(reg, **kwargs)
+        return body
+
+    @route('flow', urlFlowDeletedTables, methods=['DELETE'])
+    def delDeletedTable(self, reg, **kwargs):
+        body = self.deleteDeletedFlow(reg, **kwargs)
+        return body
+
+    def getDeletedFlow(self, req, **kwargs):
+        import subprocess
+        try:
+            print(kwargs)
+            if 'dpid' in kwargs:
+                switch_dpid = parse_dpid(kwargs['dpid'])
+            switch_name = dpidToSwitchName[switch_dpid][0]
+            command = ["ovs-ofctl", "dump-flows", switch_name]
+            flows = subprocess.check_output(command, text=True)
+            # print(flows)
+            data=flows.split('\n',)
+            del data[0]
+            del data[-1] 
+            dicts = []
+            for element in data:
+                element_dict = {}
+                items = element.split(', ')
+                for item in items:
+                    if '=' in item:
+                        key, value = item.split('=', 1) 
+                        if " actions=" in value:
+                            value, action = value.split(" actions=", 1)
+                            if ',' in value:
+                                value, match = value.split(',',1)
+                                match_key, match_value = match.split('=', 1)
+                                element_dict[match_key.strip()] = match_value.strip()
+                            element_dict[key.strip()] = value.strip()
+                            element_dict['actions'] = action.strip()
+                        else:
+                            element_dict[key.strip()] = value.strip()
+                if element_dict['cookie'] == '0xf':
+                    if 'tableID' in kwargs:
+                        print(f'tableID, {type(kwargs["tableID"])}, {kwargs["tableID"]}')
+                        print(f'table_id, {type(element_dict["table"])}, {element_dict["table"]}')
+                        if element_dict['table'] == kwargs['tableID']:
+                            print('true')
+                            dicts.append(element_dict)
+                    else:
+                        dicts.append(element_dict)
+            return json.dumps(dicts)
+
+        except Exception as e:
+            error_message = {'status': 'failure', 'reason': str(e)}
+            return Response(content_type='application/json', body=json.dumps(error_message), status=500)
+    
+    def deleteDeletedFlow(self, req, **kwargs):
+        try:
+            print(kwargs)
+            if 'dpid' in kwargs:
+                dpids = [kwargs['dpid']]
+            else: 
+                dpids = json.loads(self.get_dipds(reg, **kwargs))
+            for switch_dpid in dpids:
+                switch_dpid = parse_dpid(switch_dpid)
+                switch_name = dpidToSwitchName[switch_dpid][0]
+                if 'tableID' in kwargs:
+                    table_id = kwargs['tableID']
+                else: 
+                    table_id = 0
+                set_route = f'ovs-ofctl del-flows {switch_name} "cookie=0xf/-1,table={table_id}"'
+                state = os.system(set_route)
+                if state == 256:  
+                    body = json.dumps({'status': 'failure', 'reason': 'ovs-ofctl error'})
+                    return Response(content_type='application/json', body=body, status=406)
+            body = json.dumps({'status': 'success'})
+            return Response(content_type='application/json', body=body)
+        except Exception as e:
+            body = json.dumps({'status': 'failure', 'reason': str(e)})
+            return Response(content_type='application/json', body=body, status=500)
+
 
     # endregion
 
@@ -602,22 +730,3 @@ class ncmAPI(app_manager.RyuApp):
             return
         del self.waiters[dp.id][msg.xid]
         lock.set()
-
-    # @set_ev_cls([ofp_event.EventOFPSwitchFeatures,
-    #              ofp_event.EventOFPQueueGetConfigReply,
-    #              ofp_event.EventOFPRoleReply,
-    #              ], MAIN_DISPATCHER)
-    # def features_reply_handler(self, ev):
-    #     print('features_reply_handler')
-    #     msg = ev.msg
-    #     dp = msg.datapath
-
-    #     if dp.id not in self.waiters:
-    #         return
-    #     if msg.xid not in self.waiters[dp.id]:
-    #         return
-    #     lock, msgs = self.waiters[dp.id][msg.xid]
-    #     msgs.append(msg)
-
-    #     del self.waiters[dp.id][msg.xid]
-    #     lock.set()
