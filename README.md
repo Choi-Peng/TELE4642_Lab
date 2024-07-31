@@ -9,3 +9,7 @@
 
 - Part a: Fat-Tree Topology Generation
 - Part b: Fat-Tree Routing Protocol
+
+## Lab 3: Team Project
+
+Goto [NCM](https://github.com/Caikun-Peng/NCM)
